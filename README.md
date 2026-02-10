@@ -19,21 +19,18 @@ cd ~/Projects/pi-sensing
 
 ## 3. Set up Python environment and install requirements
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
-pip install adafruit-circuitpython-dht adafruit-blinka
+# Extra libs nodig op deze Pi
+pip install adafruit-circuitpython-dht adafruit-blinka lgpio
 ```
 
-### (Optional) Install additional GPIO libraries
-If you need pigpio Python bindings:
+### (Optional) pigpio bindings
+Alleen nodig als je pigpio wilt gebruiken i.p.v. lgpio:
 ```bash
 pip install pigpio
-```
-If you use lgpio backend:
-```bash
-pip install lgpio
 ```
 
 ## 4. Prepare USB data directory
@@ -61,6 +58,15 @@ sudo systemctl start data-collector.service
 sudo systemctl enable azure-upload.timer
 sudo systemctl start azure-upload.timer
 ```
+
+De meegeleverde units verwachten de virtuele omgeving op `/home/gerrit/Projects/pi-sensing/.venv` en zetten GPIO-env vars:
+```
+Environment=GPIO_BACKENDS=lgpio,rpi
+Environment=PULSE_SKIP_PIGPIO=1
+Environment=LGPIO_CHIP_PRIORITY=4,0,10,11,12,13
+ExecStart=/home/gerrit/Projects/pi-sensing/.venv/bin/python /home/gerrit/Projects/pi-sensing/src/collector.py
+```
+Pas paden aan als je een andere gebruikersnaam of locatie gebruikt.
 
 ### Enable pigpiod daemon (if using pigpio backend)
 Pigpio may not have a packaged daemon. Build & install from source:

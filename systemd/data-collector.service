@@ -6,7 +6,10 @@ Wants=network-online.target
 Type=simple
 User=gerrit
 WorkingDirectory=/home/gerrit/Projects/pi-sensing
-ExecStart=/home/gerrit/Projects/pi-sensing/venv/bin/python /home/gerrit/Projects/pi-sensing/src/collector.py
+Environment=GPIO_BACKENDS=lgpio,rpi
+Environment=PULSE_SKIP_PIGPIO=1
+Environment=LGPIO_CHIP_PRIORITY=4,0,10,11,12,13
+ExecStart=/home/gerrit/Projects/pi-sensing/.venv/bin/python /home/gerrit/Projects/pi-sensing/src/collector.py
 Restart=always
 RestartSec=5
 [Install]

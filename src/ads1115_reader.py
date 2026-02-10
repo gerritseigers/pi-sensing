@@ -1,51 +1,67 @@
 
-# Dummy ADC reader for testing on non-Pi systems
 from typing import Dict, List
-from time import sleep
-# import board, busio
-# from adafruit_ads1x15.ads1115 import ADS1115
-# from adafruit_ads1x15.analog_in import AnalogIn
+import time
 
-# Gain mapping for ADS1115
-GAIN_MAP = {2/3: 2/3, 1: 1, 2: 2, 4: 4, 8: 8, 16: 16}
+import board
+import busio
+from adafruit_ads1x15.ads1115 import ADS1115
+from adafruit_ads1x15.analog_in import AnalogIn
+
+
+# Gain mapping for ADS1115; defaults to 1 if an unsupported value is given.
+GAIN_MAP = {2 / 3: 2 / 3, 1: 1, 2: 2, 4: 4, 8: 8, 16: 16}
+
 
 class ADS1115Group:
     """
     Represents a group of ADS1115 ADC channels.
-    Hardware-specific code is commented out for testing.
     """
+
     def __init__(self, i2c, address, name, gain, channels: List[dict]):
         self.name = name
-        # self.ads = ADS1115(i2c, address=address)
-        # self.ads.mode = ADS1115.MODE_CONTINUOUS
-        # self.ads.gain = GAIN_MAP.get(gain, 1)
+        self.ads = ADS1115(i2c, address=int(address))
+        self.ads.gain = GAIN_MAP.get(float(gain), 1)
         self.inputs = {}
-        # for ch in channels:
-        #     idx = int(ch["channel"])
-        #     nm = ch["name"]
-        #     self.inputs[nm] = {"cfg": ch, "ain": AnalogIn(self.ads, getattr(ADS1115, f"P{idx}"))}
-        pass
+        for ch in channels or []:
+            idx = int(ch["channel"])
+            nm = ch["name"]
+            samples = max(1, int(ch.get("samples", 1)))
+            self.inputs[nm] = {"cfg": ch, "samples": samples, "ain": AnalogIn(self.ads, idx)}
 
     def read_voltages(self) -> Dict[str, float]:
-        """
-        Read voltages from all ADC channels in the group.
-        (Dummy implementation for testing.)
-        """
-        pass
+        out: Dict[str, float] = {}
+        for name, meta in self.inputs.items():
+            ain = meta["ain"]
+            samples = meta["samples"]
+            total = 0.0
+            for _ in range(samples):
+                total += ain.voltage
+                if samples > 1:
+                    time.sleep(0.005)
+            out[name] = total / samples
+        return out
+
 
 class ADCManager:
     """
     Manages multiple ADS1115Group instances.
-    Hardware-specific code is commented out for testing.
     """
+
     def __init__(self, cfg_list: List[dict]):
-        # self.i2c = busio.I2C(board.SCL, board.SDA)
-        # self.groups = [ADS1115Group(self.i2c, address=int(g["address"]), name=g["name"], gain=float(g.get("gain", 1)), channels=g.get("channels", [])) for g in (cfg_list or [])]
-        pass
+        self.i2c = busio.I2C(board.SCL, board.SDA)
+        self.groups = [
+            ADS1115Group(
+                self.i2c,
+                address=g.get("address", 0x48),
+                name=g.get("name", "ads"),
+                gain=g.get("gain", 1),
+                channels=g.get("channels", []),
+            )
+            for g in (cfg_list or [])
+        ]
 
     def read_all(self) -> Dict[str, float]:
-        """
-        Read all voltages from all ADC groups.
-        Returns dummy values for testing on non-Pi systems.
-        """
-        return {"volt_1": 0.0, "volt_2": 0.0, "volt_3": 0.0, "volt_4": 0.0}
+        readings: Dict[str, float] = {}
+        for grp in self.groups:
+            readings.update(grp.read_voltages())
+        return readings

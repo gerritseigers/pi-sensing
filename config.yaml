@@ -22,8 +22,20 @@ i2c_adcs:
       - { name: "volt_2", channel: 1, samples: 5 }
       - { name: "volt_3", channel: 2, samples: 5 }
       - { name: "volt_4", channel: 3, samples: 5 }
+  - address: 0x49
+    name: "ads1"
+    gain: 1
+    channels:
+      - { name: "volt_5", channel: 0, samples: 5 }
+      - { name: "volt_6", channel: 1, samples: 5 }
+      - { name: "volt_7", channel: 2, samples: 5 }
+      - { name: "volt_8", channel: 3, samples: 5 }
 calibration:
   volt_1: { scale: 1.000, offset: 0.000 }
   volt_2: { scale: 1.000, offset: 0.000 }
   volt_3: { scale: 1.000, offset: 0.000 }
   volt_4: { scale: 1.000, offset: 0.000 }
+  volt_5: { scale: 1.000, offset: 0.000 }
+  volt_6: { scale: 1.000, offset: 0.000 }
+  volt_7: { scale: 1.000, offset: 0.000 }
+  volt_8: { scale: 1.000, offset: 0.000 }

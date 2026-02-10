@@ -7,7 +7,7 @@ Type=oneshot
 User=gerrit
 WorkingDirectory=/home/gerrit/Projects/pi-sensing
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/gerrit/Projects/pi-sensing/venv/bin/python /home/gerrit/Projects/pi-sensing/src/uploader.py --once
+ExecStart=/home/gerrit/Projects/pi-sensing/.venv/bin/python /home/gerrit/Projects/pi-sensing/src/uploader.py --once
 [Install]
 WantedBy=multi-user.target
 

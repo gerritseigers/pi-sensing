@@ -122,17 +122,19 @@ class PulseCounter:
                         chip_num = int(chip_path.replace('/dev/gpiochip',''))
                         try:
                             h = lgpio.gpiochip_open(chip_num)
-                            pud = lgpio.PULL_UP if self.pull_up else lgpio.PULL_DOWN
-                            lgpio.gpio_set_pull(h, self.gpio, pud)
+                            flags = lgpio.SET_PULL_UP if self.pull_up else lgpio.SET_PULL_DOWN
+
                             def _lg_cb(chip, gpio, level, tick):
-                                if level in (0,1):
+                                if level in (0, 1):
                                     if (self.falling and level == 0) or (not self.falling and level == 1):
                                         with self._lock:
                                             self.count += 1
-                            # attempt to claim this line number on this chip
-                            lgpio.gpio_claim_input(h, self.gpio)
-                            lgpio.gpio_set_debounce(h, self.gpio, int(self.debounce_us/1000))
-                            lgpio.gpio_set_alert_func(h, self.gpio, _lg_cb)
+
+                            # Attempt to claim this line number on this chip with pull set via flags
+                            lgpio.gpio_claim_input(h, self.gpio, flags)
+                            lgpio.gpio_set_debounce_micros(h, self.gpio, int(self.debounce_us))
+                            edge = lgpio.FALLING_EDGE if self.falling else lgpio.RISING_EDGE
+                            self._cb = lgpio.callback(h, self.gpio, edge, _lg_cb)
                             self._backend = ("lgpio", (h,))
                             logger.info(f"PulseCounter started on GPIO {self.gpio} using lgpio (chip {chip_num})")
                             claimed = True
@@ -194,6 +196,11 @@ class PulseCounter:
         elif name == "lgpio":
             try:
                 import lgpio
+                if self._cb:
+                    try:
+                        self._cb.cancel()
+                    except Exception:
+                        pass
                 h = b[0]
                 lgpio.gpiochip_close(h)
                 logger.info(f"PulseCounter on GPIO {self.gpio} stopped (lgpio)")
