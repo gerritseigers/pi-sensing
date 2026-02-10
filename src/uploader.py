@@ -40,7 +40,9 @@ def list_candidates():
     """
     List all CSV files in the USB mount directory.
     """
-    return sorted(USB_MOUNT.glob("*.csv"))
+    files = sorted(USB_MOUNT.glob("*.csv"))
+    logger.info("Found %d csv candidates in %s", len(files), USB_MOUNT)
+    return files
 
 def target_blob_path(local):
     """
@@ -67,12 +69,15 @@ def upload_once():
     for f in list_candidates():
         ok = f.with_suffix(f.suffix + ".ok")
         if ok.exists():
+            logger.debug("Skip %s (ok marker exists)", f)
             continue  # Skip files already marked as uploaded
+        target = target_blob_path(f)
+        logger.info("Uploading %s -> %s", f, target)
         with open(f, "rb") as fh:
-            cont.upload_blob(name=target_blob_path(f), data=fh, overwrite=True)
+            cont.upload_blob(name=target, data=fh, overwrite=True)
         ok.write_text(datetime.now(timezone.utc).isoformat())
         uploaded += 1
-        logger.info(f"Uploaded {f} to Azure as {target_blob_path(f)}")
+        logger.info(f"Uploaded {f} to Azure as {target}")
     if uploaded:
         logger.info(f"Total files uploaded: {uploaded}")
     return uploaded
@@ -113,7 +118,12 @@ def main():
         print(f"Uploaded {uploaded} files.")
         logger.info(f"Uploader ran once, uploaded {uploaded} files.")
         return
-    logger.info(f"Starting continuous upload loop, interval={upload_minutes} minutes")
+    logger.info(
+        "Starting continuous upload loop, interval=%d minutes, prefix=%s, device_id=%s",
+        upload_minutes,
+        ACTIVE_PREFIX or "(none)",
+        ACTIVE_DEVICE_ID,
+    )
     while True:
         loop_started = time.time()
         try:
