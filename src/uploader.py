@@ -21,8 +21,10 @@ CONN_STR = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
 ACCOUNT_URL = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "")
 SAS_TOKEN = os.environ.get("AZURE_STORAGE_SAS_TOKEN", "")
 CONTAINER = os.environ.get("AZURE_BLOB_CONTAINER", "stable-sensing")
-PREFIX = os.environ.get("AZURE_BLOB_PREFIX", "").strip("/")
-DEVICE_ID = os.environ.get("DEVICE_ID", "pi-node-01")
+
+# These are resolved at runtime from config/environment
+ACTIVE_PREFIX = os.environ.get("AZURE_BLOB_PREFIX", "").strip("/")
+ACTIVE_DEVICE_ID = os.environ.get("DEVICE_ID", "pi-node-01")
 
 def _client():
     """
@@ -48,7 +50,7 @@ def target_blob_path(local):
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     # Insert timestamp before suffix, e.g. data.csv -> data_20260210T092529Z.csv
     stamped = f"{local.stem}_{ts}{local.suffix}"
-    parts = [p for p in [PREFIX, DEVICE_ID] if p]
+    parts = [p for p in [ACTIVE_PREFIX, ACTIVE_DEVICE_ID] if p]
     return "/".join(parts + [stamped])
 
 def upload_once():
@@ -87,6 +89,21 @@ def main():
         cfg = load_config(CONFIG_PATH)
     except Exception as e:
         logger.warning(f"Could not load config {CONFIG_PATH}: {e}; using defaults")
+    device_cfg = cfg.get("device", {}) if isinstance(cfg, dict) else {}
+    site = str(device_cfg.get("site", "")).strip()
+    location = str(device_cfg.get("location", "")).strip()
+    cfg_device_id = str(device_cfg.get("id", "")).strip() or None
+
+    # Resolve prefix: env overrides, else site/location from config
+    global ACTIVE_PREFIX, ACTIVE_DEVICE_ID
+    if os.environ.get("AZURE_BLOB_PREFIX"):
+        ACTIVE_PREFIX = os.environ.get("AZURE_BLOB_PREFIX", "").strip("/")
+    else:
+        parts = [p for p in [site, location] if p]
+        ACTIVE_PREFIX = "/".join(parts)
+
+    ACTIVE_DEVICE_ID = os.environ.get("DEVICE_ID", cfg_device_id or "pi-node-01")
+
     upload_minutes = int(cfg.get("upload_minutes", 5)) if isinstance(cfg, dict) else 5
     if upload_minutes <= 0:
         upload_minutes = 5
