@@ -7,10 +7,6 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# DHT22 sensor imports
-import board
-import adafruit_dht
-
 # Project utility imports
 from utils import (
     apply_calibration,
@@ -58,23 +54,19 @@ def initialize_pulse_counters(pulse_configs):
 
 def create_headers(counters, adc_channels):
     """
-    Build CSV header names for pulse counts, ADC readings, and DHT22 sensor values.
+    Build CSV header names for pulse counts and ADC readings.
     """
     pulse_columns = [f"pulse_{name}_count" for name, _ in counters]
     adc_columns = [f"adc_{channel}_voltage_v" for channel in adc_channels]
-    dht_columns = ["dht22_temp_c", "dht22_humidity_pct"]
-    return ["timestamp_utc"] + pulse_columns + adc_columns + dht_columns
+    return ["timestamp_utc"] + pulse_columns + adc_columns
 
 def main():
     """
-    Main data collection loop. Reads pulses, ADC, and DHT22, writes to CSV.
+    Main data collection loop. Reads pulses and ADC, writes to CSV.
     """
     cfg = load_config(CONFIG_PATH)
     sampling_seconds = int(cfg.get("sampling_seconds", 60))
     pulses_enabled = bool(cfg.get("pulses_enabled", True))
-    dht_enabled = bool(cfg.get("dht_enabled", True))
-    dht_pin = int(cfg.get("dht_pin", 4))
-    dht_retries = int(cfg.get("dht_retries", 3))
     device_id = cfg.get("device", {}).get("id", DEVICE_ID)
     calibration = cfg.get("calibration", {})
 
@@ -111,25 +103,6 @@ def main():
     # Uncomment to align sampling to the next minute
     # align_to_next_minute()
 
-    # Initialize DHT22 sensor on configurable GPIO pin with limited retries if enabled
-    dht_device = None
-    if dht_enabled:
-        for attempt in range(3):
-            try:
-                # Map BCM pin to board.* if available via a lookup, else default to board.D4 when pin=4
-                # CircuitPython's 'board' module exposes named constants for common pins; for dynamic mapping
-                # we fallback to board.D4 when using pin 4; other pins may require manual change.
-                selected_pin = getattr(board, f"D{dht_pin}", board.D4)
-                dht_device = adafruit_dht.DHT22(selected_pin)
-                logger.info(f"DHT22 sensor initialized on BCM {dht_pin}")
-                break
-            except Exception as e:
-                logger.debug(f"DHT22 init attempt {attempt+1} failed: {e}")
-                time.sleep(0.5)
-        if not dht_device:
-            logger.warning("Failed to initialize DHT22 after retries; disabling sensor")
-            dht_enabled = False
-
     while True:
         loop_started = time.time()
         timestamp_utc = datetime.now(timezone.utc).isoformat()
@@ -141,28 +114,8 @@ def main():
         adc_calibrated = apply_calibration(adc_raw, calibration)
         adc_values = [adc_calibrated.get(channel) for channel in adc_channels]
 
-        # Read DHT22 sensor on GPIO4 using CircuitPython
-        if dht_enabled and dht_device:
-            temperature = float('nan')
-            humidity = float('nan')
-            for attempt in range(dht_retries):
-                try:
-                    t = dht_device.temperature
-                    h = dht_device.humidity
-                    if t is not None and h is not None:
-                        temperature, humidity = t, h
-                        if attempt > 0:
-                            logger.debug(f"DHT22 read succeeded after {attempt+1} attempts")
-                        break
-                except Exception as e:
-                    logger.debug(f"DHT22 read attempt {attempt+1} failed: {e}")
-                    time.sleep(0.2)
-        else:
-            temperature = float('nan')
-            humidity = float('nan')
-
         # Write all sensor values to CSV
-        writer.writerow([timestamp_utc] + pulse_values + adc_values + [temperature, humidity])
+        writer.writerow([timestamp_utc] + pulse_values + adc_values)
         file_handle.flush()
         os.fsync(file_handle.fileno())
 
