@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.build/
+build/
+dist/
+.venv/
+venv/
+.env
+.env.*
+*.log
+
+# C/C++ build artifacts
+*.o
+*.a
+*.so
+*.out
+*.exe
+*.obj
+
+# VS Code / editors
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Coverage / test
+.coverage
+htmlcov/
+.coverage.*
+
+# Generated docs
+site/
+
+# Wheel / packaging
+*.whl
+pip-wheel-metadata/

@@ -1,0 +1,22 @@
+[Unit]
+Description=Pi Edge Sensing: Azure uploader
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=gerrit
+WorkingDirectory=/home/gerrit/Projects/pi-sensing
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/gerrit/Projects/pi-sensing/venv/bin/python /home/gerrit/Projects/pi-sensing/src/uploader.py --once
+[Install]
+WantedBy=multi-user.target
+
+[Unit]
+Description=Run Azure uploader every 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

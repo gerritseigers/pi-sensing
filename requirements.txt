@@ -1,0 +1,6 @@
+azure-storage-blob==12.22.0
+PyYAML==6.0.2
+python-dotenv==1.0.1
+pigpio==1.78
+RPi.GPIO==0.7.1
+adafruit-circuitpython-ads1x15==3.0.1

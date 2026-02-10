@@ -1,0 +1,11 @@
+[Unit]
+Description=Pigpio daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/pigpiod -l
+Restart=on-failure
+Type=simple
+
+[Install]
+WantedBy=multi-user.target

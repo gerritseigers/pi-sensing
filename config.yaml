@@ -1,0 +1,29 @@
+sampling_seconds: 60
+pulses_enabled: true
+dht_enabled: true
+dht_pin: 4          # BCM pin for DHT22 data line
+dht_retries: 3       # number of read retries per sample
+gpio_backends: [pigpio, lgpio, rpi]
+lgpio_chip_priority: [0, 4, 10, 11, 12, 13]
+device:
+  id: "pi-node-01"
+  site: "Farm-X"
+  location: "Barn-1"
+storage: { daily_rotate: true }
+pulses:
+  - { name: "fan_rpm", gpio: 17, pull_up: true, edge: "falling", debounce_us: 5000 }
+  - { name: "meter_pulses", gpio: 27, pull_up: true, edge: "falling", debounce_us: 2000 }
+i2c_adcs:
+  - address: 0x48
+    name: "ads0"
+    gain: 1
+    channels:
+      - { name: "volt_1", channel: 0, samples: 5 }
+      - { name: "volt_2", channel: 1, samples: 5 }
+      - { name: "volt_3", channel: 2, samples: 5 }
+      - { name: "volt_4", channel: 3, samples: 5 }
+calibration:
+  volt_1: { scale: 1.000, offset: 0.000 }
+  volt_2: { scale: 1.000, offset: 0.000 }
+  volt_3: { scale: 1.000, offset: 0.000 }
+  volt_4: { scale: 1.000, offset: 0.000 }

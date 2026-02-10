@@ -1,0 +1,13 @@
+[Unit]
+Description=Pi Edge Sensing: data collector (UTC minute sampling)
+After=network-online.target pigpiod.service
+Wants=network-online.target
+[Service]
+Type=simple
+User=gerrit
+WorkingDirectory=/home/gerrit/Projects/pi-sensing
+ExecStart=/home/gerrit/Projects/pi-sensing/venv/bin/python /home/gerrit/Projects/pi-sensing/src/collector.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
