@@ -68,9 +68,17 @@ def upload_once():
     uploaded = 0
     for f in list_candidates():
         ok = f.with_suffix(f.suffix + ".ok")
+        # If marker exists, re-upload only if file changed since marker was written
         if ok.exists():
-            logger.debug("Skip %s (ok marker exists)", f)
-            continue  # Skip files already marked as uploaded
+            try:
+                if f.stat().st_mtime <= ok.stat().st_mtime:
+                    logger.debug("Skip %s (ok marker newer or same mtime)", f)
+                    continue
+                else:
+                    logger.info("Re-uploading %s (file newer than ok)", f)
+            except FileNotFoundError:
+                # If one of them disappeared in between, just proceed to upload
+                logger.debug("Stat race for %s or %s; proceeding to upload", f, ok)
         target = target_blob_path(f)
         logger.info("Uploading %s -> %s", f, target)
         with open(f, "rb") as fh:
