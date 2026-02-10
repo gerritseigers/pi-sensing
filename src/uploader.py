@@ -12,14 +12,12 @@ from azure.storage.blob import BlobServiceClient
 logger = setup_logger("uploader", logfile="uploader.log")
 
 # Load environment variables from .env file
-load_dotenv()
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=ROOT_DIR / ".env")
 
 # Configuration from environment variables
 CONFIG_PATH = os.environ.get("EDGE_CONFIG", "/home/gerrit/Projects/pi-sensing/config.yaml")
 USB_MOUNT = Path(os.environ.get("USB_MOUNT", "/mnt/usb-data"))
-CONN_STR = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
-ACCOUNT_URL = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "")
-SAS_TOKEN = os.environ.get("AZURE_STORAGE_SAS_TOKEN", "")
 CONTAINER = os.environ.get("AZURE_BLOB_CONTAINER", "stable-sensing")
 
 # These are resolved at runtime from config/environment
@@ -30,10 +28,15 @@ def _client():
     """
     Create and return an Azure BlobServiceClient using connection string or account URL + SAS token.
     """
-    if CONN_STR:
-        return BlobServiceClient.from_connection_string(CONN_STR)
-    if ACCOUNT_URL and SAS_TOKEN:
-        return BlobServiceClient(account_url=ACCOUNT_URL, credential=SAS_TOKEN)
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
+    acct_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "")
+    sas = os.environ.get("AZURE_STORAGE_SAS_TOKEN", "")
+    if conn_str:
+        logger.debug("Using connection string auth")
+        return BlobServiceClient.from_connection_string(conn_str)
+    if acct_url and sas:
+        logger.debug("Using account URL + SAS auth")
+        return BlobServiceClient(account_url=acct_url, credential=sas)
     raise RuntimeError("No Azure credentials given.")
 
 def list_candidates():
