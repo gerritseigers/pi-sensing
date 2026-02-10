@@ -125,6 +125,7 @@ class PulseCounter:
                         try:
                             h = lgpio.gpiochip_open(chip_num)
                             flags = lgpio.SET_PULL_UP if self.pull_up else lgpio.SET_PULL_DOWN
+                            edge = lgpio.FALLING_EDGE if self.falling else lgpio.RISING_EDGE
 
                             def _lg_cb(chip, gpio, level, tick):
                                 if level in (0, 1):
@@ -132,10 +133,9 @@ class PulseCounter:
                                         with self._lock:
                                             self.count += 1
 
-                            # Attempt to claim this line number on this chip with pull set via flags
-                            lgpio.gpio_claim_input(h, self.gpio, flags)
+                            # Claim alerts so callbacks actually fire; set pull bias via flags
+                            lgpio.gpio_claim_alert(h, self.gpio, edge, flags)
                             lgpio.gpio_set_debounce_micros(h, self.gpio, int(self.debounce_us))
-                            edge = lgpio.FALLING_EDGE if self.falling else lgpio.RISING_EDGE
                             self._cb = lgpio.callback(h, self.gpio, edge, _lg_cb)
                             self._backend = ("lgpio", (h,))
                             logger.info(f"PulseCounter started on GPIO {self.gpio} using lgpio (chip {chip_num})")
