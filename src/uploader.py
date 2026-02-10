@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timezone
 
-from utils import setup_logger
+from utils import setup_logger, load_config
 from dotenv import load_dotenv
 from azure.storage.blob import BlobServiceClient
 logger = setup_logger("uploader", logfile="uploader.log")
@@ -15,6 +15,7 @@ logger = setup_logger("uploader", logfile="uploader.log")
 load_dotenv()
 
 # Configuration from environment variables
+CONFIG_PATH = os.environ.get("EDGE_CONFIG", "/home/gerrit/Projects/pi-sensing/config.yaml")
 USB_MOUNT = Path(os.environ.get("USB_MOUNT", "/mnt/usb-data"))
 CONN_STR = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
 ACCOUNT_URL = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "")
@@ -76,23 +77,36 @@ def upload_once():
 
 def main():
     """
-    Main entry point. If --once is given, upload once and exit. Otherwise, run in a loop every 5 minutes.
+    Main entry point. If --once is given, upload once and exit. Otherwise, run in a loop based on config upload_minutes.
     """
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
     args = ap.parse_args()
+    cfg = {}
+    try:
+        cfg = load_config(CONFIG_PATH)
+    except Exception as e:
+        logger.warning(f"Could not load config {CONFIG_PATH}: {e}; using defaults")
+    upload_minutes = int(cfg.get("upload_minutes", 5)) if isinstance(cfg, dict) else 5
+    if upload_minutes <= 0:
+        upload_minutes = 5
+
     if args.once:
         uploaded = upload_once()
         print(f"Uploaded {uploaded} files.")
         logger.info(f"Uploader ran once, uploaded {uploaded} files.")
         return
+    logger.info(f"Starting continuous upload loop, interval={upload_minutes} minutes")
     while True:
+        loop_started = time.time()
         try:
             upload_once()
         except Exception as e:
             logger.error(f"Upload error: {e}")
             print(f"Upload error: {e}", file=sys.stderr)
-        time.sleep(300)
+        elapsed = time.time() - loop_started
+        sleep_sec = max(0, upload_minutes * 60 - elapsed)
+        time.sleep(sleep_sec)
 
 if __name__ == '__main__':
     main()

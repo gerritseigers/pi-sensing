@@ -3,6 +3,7 @@ pulses_enabled: true
 dht_enabled: true
 dht_pin: 4          # BCM pin for DHT22 data line
 dht_retries: 3       # number of read retries per sample
+upload_minutes: 5     # how often to attempt Azure upload (minutes)
 gpio_backends: [pigpio, lgpio, rpi]
 lgpio_chip_priority: [0, 4, 10, 11, 12, 13]
 device:
