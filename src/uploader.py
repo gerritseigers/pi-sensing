@@ -50,11 +50,10 @@ def list_candidates():
 def target_blob_path(local):
     """
     Build the blob path in Azure using prefix, device ID, and local filename.
-    Adds UTC timestamp into the blob filename to keep each upload unique.
+    Uses the UTC date so each run in a day overwrites the same blob.
     """
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    # Insert timestamp before suffix, e.g. data.csv -> data_20260210T092529Z.csv
-    stamped = f"{local.stem}_{ts}{local.suffix}"
+    date_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamped = f"{date_utc}{local.suffix}"
     parts = [p for p in [ACTIVE_PREFIX, ACTIVE_DEVICE_ID] if p]
     return "/".join(parts + [stamped])
 

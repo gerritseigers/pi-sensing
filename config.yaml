@@ -1,6 +1,6 @@
 sampling_seconds: 60
 pulses_enabled: true
-upload_minutes: 5     # how often to attempt Azure upload (minutes)
+upload_minutes: 60    # how often to attempt Azure upload (minutes)
 gpio_backends: [pigpio, lgpio, rpi]
 lgpio_chip_priority: [0, 4, 10, 11, 12, 13]
 device:
@@ -10,7 +10,7 @@ device:
 storage: { daily_rotate: true }
 iot:
   enabled: true          # zet op false om IoT Hub te pauzeren
-  heartbeat_seconds: 60  # interval voor "I am alive"
+  heartbeat_seconds: 15  # interval voor "I am alive"
   send_settings_on_start: true
 pulses:
   - { name: "fan_rpm", gpio: 17, pull_up: true, edge: "falling", debounce_us: 5000 }
