@@ -78,9 +78,9 @@ Maak `.env` in de projectroot:
 ```
 AZURE_STORAGE_CONNECTION_STRING="<je-connection-string>"
 AZURE_BLOB_CONTAINER=stable-sensing
+# IOTHUB_DEVICE_CONNECTION_STRING="HostName=...;DeviceId=...;SharedAccessKey=..."
 # Optioneel overrides
 # AZURE_BLOB_PREFIX=site/location
-# DEVICE_ID=pi-node-01
 # USB_MOUNT=/mnt/usb-data
 ```
 Let op: gebruik quotes rond de volledige connection string om truncatie door shells te voorkomen.
@@ -146,5 +146,9 @@ sudo systemctl restart data-collector.service azure-upload.service
 ## 14. Wat er gebeurt
 - `data-collector` schrijft elke minuut CSV naar `/mnt/usb-data`, naam bevat device-id.
 - `uploader` stuurt CSV-bestanden naar Azure Blob, met prefix `site/location/device_id` en timestamp in de bestandsnaam, en markeert uploads met `.ok`.
+- Indien `iot.enabled: true` en `IOTHUB_DEVICE_CONNECTION_STRING` gezet, stuurt de collector IoT Hub-berichten:
+  - `settings` bij start (config dump)
+  - `heartbeat` elke `heartbeat_seconds`
+  - `data` bij elke sample (puls- en ADC-waarden)
 
 Troubleshooting: kijk in `collector.log` en `uploader.log` in de projectroot voor details.

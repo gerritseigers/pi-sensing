@@ -8,6 +8,10 @@ device:
   site: "Farm-X"
   location: "Barn-1"
 storage: { daily_rotate: true }
+iot:
+  enabled: true          # zet op false om IoT Hub te pauzeren
+  heartbeat_seconds: 60  # interval voor "I am alive"
+  send_settings_on_start: true
 pulses:
   - { name: "fan_rpm", gpio: 17, pull_up: true, edge: "falling", debounce_us: 5000 }
   - { name: "meter_pulses", gpio: 27, pull_up: true, edge: "falling", debounce_us: 2000 }

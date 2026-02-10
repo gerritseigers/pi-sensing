@@ -17,6 +17,7 @@ from utils import (
 )
 from pulse import PulseCounter
 from ads1115_reader import ADCManager
+from iot import IoTHubSender
 
 # Configuration paths and environment
 CONFIG_PATH = os.environ.get("EDGE_CONFIG", "/home/gerrit/Projects/pi-sensing/config.yaml")
@@ -69,6 +70,11 @@ def main():
     pulses_enabled = bool(cfg.get("pulses_enabled", True))
     device_id = cfg.get("device", {}).get("id", DEVICE_ID)
     calibration = cfg.get("calibration", {})
+    iot_cfg = cfg.get("iot", {}) if isinstance(cfg, dict) else {}
+    iot_enabled = bool(iot_cfg.get("enabled", True))
+    heartbeat_seconds = int(iot_cfg.get("heartbeat_seconds", 60))
+    send_settings_on_start = bool(iot_cfg.get("send_settings_on_start", True))
+    iot_conn = os.environ.get("IOTHUB_DEVICE_CONNECTION_STRING", "")
 
     # Ensure USB mount directory exists
     ensure_dir(USB_MOUNT)
@@ -92,6 +98,20 @@ def main():
     counters = initialize_pulse_counters(cfg.get("pulses", [])) if pulses_enabled else []
     adc_manager = ADCManager(cfg.get("i2c_adcs", []))
 
+    # IoT Hub client
+    iot = None
+    if iot_enabled and iot_conn:
+        iot = IoTHubSender(iot_conn, device_id)
+        iot.start()
+        if send_settings_on_start:
+            try:
+                iot.send("settings", cfg)
+            except Exception:
+                logger.warning("IoT settingsbericht kon niet worden verstuurd")
+    else:
+        if iot_enabled:
+            logger.warning("IoT Hub geactiveerd maar geen IOTHUB_DEVICE_CONNECTION_STRING; IoT uit")
+
     # Capture an initial reading to learn which ADC channels are present
     adc_channels = sorted(adc_manager.read_all().keys())
     header = create_headers(counters, adc_channels)
@@ -102,6 +122,9 @@ def main():
 
     # Uncomment to align sampling to the next minute
     # align_to_next_minute()
+
+    next_heartbeat = time.time() + heartbeat_seconds if heartbeat_seconds > 0 else None
+    start_time = time.time()
 
     while True:
         loop_started = time.time()
@@ -118,6 +141,27 @@ def main():
         writer.writerow([timestamp_utc] + pulse_values + adc_values)
         file_handle.flush()
         os.fsync(file_handle.fileno())
+
+        # Send data to IoT Hub
+        if iot:
+            try:
+                payload = {
+                    "timestamp": timestamp_utc,
+                    "pulses": {name: val for (name, _), val in zip(counters, pulse_values)},
+                    "adc": {channel: val for channel, val in zip(adc_channels, adc_values)},
+                }
+                iot.send("data", payload)
+            except Exception:
+                logger.warning("IoT data-bericht kon niet worden verstuurd")
+
+            # Heartbeat
+            if next_heartbeat and time.time() >= next_heartbeat:
+                try:
+                    uptime = int(time.time() - start_time)
+                    iot.send("heartbeat", {"uptime_s": uptime})
+                except Exception:
+                    logger.warning("IoT heartbeat kon niet worden verstuurd")
+                next_heartbeat = time.time() + heartbeat_seconds if heartbeat_seconds > 0 else None
 
         # Sleep until next sample
         elapsed = time.time() - loop_started
