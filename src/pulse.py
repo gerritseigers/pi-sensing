@@ -56,6 +56,8 @@ class PulseCounter:
         backend_order = self._backend_order or os.environ.get("GPIO_BACKENDS", "pigpio,lgpio,rpi").split(',')
         skip_pigpio = os.environ.get("PULSE_SKIP_PIGPIO") == "1"
 
+        logger.info("PulseCounter init gpio=%s backends=%s skip_pigpio=%s", self.gpio, backend_order, skip_pigpio)
+
         for backend in [b.strip() for b in backend_order]:
             if backend == "pigpio":
                 if skip_pigpio:

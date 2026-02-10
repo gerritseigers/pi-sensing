@@ -1,6 +1,7 @@
 
 from typing import Dict, List
 import time
+import logging
 
 import board
 import busio
@@ -10,6 +11,8 @@ from adafruit_ads1x15.analog_in import AnalogIn
 
 # Gain mapping for ADS1115; defaults to 1 if an unsupported value is given.
 GAIN_MAP = {2 / 3: 2 / 3, 1: 1, 2: 2, 4: 4, 8: 8, 16: 16}
+
+logger = logging.getLogger("ads1115")
 
 
 class ADS1115Group:
@@ -22,6 +25,7 @@ class ADS1115Group:
         self.ads = ADS1115(i2c, address=int(address))
         self.ads.gain = GAIN_MAP.get(float(gain), 1)
         self.inputs = {}
+        logger.info("Init ADS1115 group %s addr=0x%02X gain=%s channels=%d", self.name, int(address), self.ads.gain, len(channels or []))
         for ch in channels or []:
             idx = int(ch["channel"])
             nm = ch["name"]
@@ -39,6 +43,7 @@ class ADS1115Group:
                 if samples > 1:
                     time.sleep(0.005)
             out[name] = total / samples
+            logger.debug("%s ch=%s samples=%d V=%.6f", self.name, name, samples, out[name])
         return out
 
 
@@ -59,6 +64,7 @@ class ADCManager:
             )
             for g in (cfg_list or [])
         ]
+        logger.info("ADCManager initialized with %d group(s)", len(self.groups))
 
     def read_all(self) -> Dict[str, float]:
         readings: Dict[str, float] = {}
