@@ -11,7 +11,7 @@ sudo apt-get upgrade -y
 ```
 - Installeer basisbuild en Python tooling:
 ```bash
-sudo apt-get install -y python3-venv python3-pip git build-essential python3-dev libffi-dev
+sudo apt-get install -y python3-venv python3-pip git build-essential python3-dev libffi-dev swig liblgpio-dev
 ```
 
 ## 2. I2C en (optioneel) SPI/GPIO permissies
@@ -76,16 +76,16 @@ Bewerk `config.yaml` voor je installatie:
 ## 8. Azure credentials (.env)
 Maak `.env` in de projectroot:
 ```bash
-AZURE_STORAGE_CONNECTION_STRING="<je-blob-storage-connection-string>"
+AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net
 AZURE_BLOB_CONTAINER=stable-sensing
-IOTHUB_DEVICE_CONNECTION_STRING="HostName=...;DeviceId=...;SharedAccessKey=..."
+IOTHUB_DEVICE_CONNECTION_STRING=HostName=...;DeviceId=...;SharedAccessKey=...
 
 # Optioneel overrides
 # AZURE_BLOB_PREFIX=site/location
 # USB_MOUNT=/mnt/usb-data
 ```
 **Belangrijk:**
-- Gebruik quotes rond de volledige connection strings om truncatie door shells te voorkomen.
+- **Gebruik GEEN quotes** rond de connection strings! Systemd's `EnvironmentFile` neemt quotes letterlijk over, waardoor de Azure SDK foutmeldingen geeft zoals "Connection string missing required connection details".
 - `IOTHUB_DEVICE_CONNECTION_STRING` is vereist voor IoT Hub telemetrie (heartbeat, data, settings).
 - Haal de IoT Hub connection string op via Azure Portal → IoT Hub → Devices → [device] → Primary Connection String.
 
