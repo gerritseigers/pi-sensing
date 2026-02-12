@@ -38,8 +38,8 @@ cd pi-sensing
 
 ## 4. Python virtualenv en dependencies
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt adafruit-blinka lgpio
 ```
@@ -75,26 +75,42 @@ Bewerk `config.yaml` voor je installatie:
 
 ## 8. Azure credentials (.env)
 Maak `.env` in de projectroot:
-```
-AZURE_STORAGE_CONNECTION_STRING="<je-connection-string>"
+```bash
+AZURE_STORAGE_CONNECTION_STRING="<je-blob-storage-connection-string>"
 AZURE_BLOB_CONTAINER=stable-sensing
-# IOTHUB_DEVICE_CONNECTION_STRING="HostName=...;DeviceId=...;SharedAccessKey=..."
+IOTHUB_DEVICE_CONNECTION_STRING="HostName=...;DeviceId=...;SharedAccessKey=..."
+
 # Optioneel overrides
 # AZURE_BLOB_PREFIX=site/location
 # USB_MOUNT=/mnt/usb-data
 ```
-Let op: gebruik quotes rond de volledige connection string om truncatie door shells te voorkomen.
+**Belangrijk:**
+- Gebruik quotes rond de volledige connection strings om truncatie door shells te voorkomen.
+- `IOTHUB_DEVICE_CONNECTION_STRING` is vereist voor IoT Hub telemetrie (heartbeat, data, settings).
+- Haal de IoT Hub connection string op via Azure Portal → IoT Hub → Devices → [device] → Primary Connection String.
 
 ## 9. Systemd services installeren
+
+**Let op:** De service bestanden bevatten hardcoded paden. Controleer en pas aan indien nodig:
+- `User=gerrit` → jouw gebruikersnaam
+- `/home/gerrit/Projects/pi-sensing` → jouw installatiemap
+- `venv/bin/python` → pad naar Python in je virtualenv
+
 ```bash
+# Bekijk en pas eventueel aan:
+nano systemd/data-collector.service
+nano systemd/azure-upload.service
+
+# Installeer de services:
 sudo cp systemd/data-collector.service /etc/systemd/system/
 sudo cp systemd/azure-upload.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now data-collector.service
 sudo systemctl enable --now azure-upload.service
 ```
-- `data-collector.service` draait de sensorlezing; `azure-upload.service` uploadt continu.
-- Units zetten standaard `GPIO_BACKENDS=lgpio,rpi` en `PULSE_SKIP_PIGPIO=1`. Pas paden/gebruikersnaam aan als je een andere locatie gebruikt.
+- `data-collector.service` draait de sensorlezing en IoT Hub communicatie.
+- `azure-upload.service` uploadt CSV-bestanden naar Azure Blob Storage.
+- Services laden automatisch de `.env` file via `EnvironmentFile`.
 
 ## 10. Controleren
 ```bash
@@ -105,13 +121,30 @@ journalctl -u azure-upload.service -n 50 --no-pager
 ```
 
 ## 11. Handige tests
-- I2C scan:
+
+### ADS1115 test:
+```bash
+source venv/bin/activate
+python3 -c "
+import yaml
+from src.ads1115_reader import ADCManager
+with open('config.yaml') as f:
+    cfg = yaml.safe_load(f)
+adc = ADCManager(cfg.get('i2c_adcs', []))
+for name, voltage in adc.read_all().items():
+    print(f'{name}: {voltage:.4f} V')
+"
+```
+
+### I2C scan:
 ```bash
 i2cdetect -y 1   # verwacht 0x48 en eventueel 0x49
 ```
-- Pulse test (tik pin 11/13 naar GND):
+
+### Pulse test (tik pin 11/13 naar GND):
 ```bash
-PULSE_SKIP_PIGPIO=1 GPIO_BACKENDS=lgpio,rpi python - <<'PY'
+source venv/bin/activate
+PULSE_SKIP_PIGPIO=1 GPIO_BACKENDS=lgpio,rpi python3 - <<'PY'
 import time
 from src.pulse import PulseCounter
 c = PulseCounter(gpio=17, pull_up=True, falling=True, debounce_us=5000)
@@ -126,6 +159,26 @@ finally:
 PY
 ```
 
+### IoT Hub test:
+```bash
+source venv/bin/activate
+set -a && source .env && set +a
+python3 -c "
+import os
+from src.iot import IoTHubSender
+conn = os.environ.get('IOTHUB_DEVICE_CONNECTION_STRING', '')
+if conn:
+    iot = IoTHubSender(conn, 'test-device')
+    iot.start()
+    if iot.client:
+        iot.send('test', {'msg': 'Hello'})
+        print('IoT Hub: OK')
+        iot.stop()
+else:
+    print('Geen IOTHUB_DEVICE_CONNECTION_STRING in .env')
+"
+```
+
 ## 12. Optioneel: pigpio daemon
 Niet nodig bij gebruik van lgpio. Als je pigpio wilt:
 ```bash
@@ -138,7 +191,7 @@ Zet dan desgewenst `GPIO_BACKENDS=pigpio,lgpio,rpi` en `PULSE_SKIP_PIGPIO=0`.
 ```bash
 cd ~/Projects/pi-sensing
 git pull
-source .venv/bin/activate
+source venv/bin/activate
 pip install -r requirements.txt adafruit-blinka lgpio
 sudo systemctl restart data-collector.service azure-upload.service
 ```
@@ -151,4 +204,42 @@ sudo systemctl restart data-collector.service azure-upload.service
   - `heartbeat` elke `heartbeat_seconds`
   - `data` bij elke sample (puls- en ADC-waarden)
 
-Troubleshooting: kijk in `collector.log` en `uploader.log` in de projectroot voor details.
+## 15. Troubleshooting
+
+### Service start niet / ModuleNotFoundError
+```bash
+journalctl -u data-collector.service -n 50 --no-pager
+```
+**Oorzaak:** Verkeerd Python pad in service file.  
+**Oplossing:** Controleer dat `ExecStart` verwijst naar `venv/bin/python` (niet `.venv`).
+
+### PermissionError: '/mnt/usb-data'
+```bash
+sudo mkdir -p /mnt/usb-data
+sudo chown $USER:$USER /mnt/usb-data
+```
+
+### IoT Hub berichten worden niet verstuurd
+- Controleer of `IOTHUB_DEVICE_CONNECTION_STRING` in `.env` staat
+- Service moet `.env` laden via `EnvironmentFile` in de service file
+- Test handmatig met de IoT Hub test hierboven
+
+### ADS1115 niet gevonden
+```bash
+i2cdetect -y 1
+```
+- Verwacht `48` (en `49` bij tweede module)
+- Controleer bedrading: SDA=GPIO2 (pin 3), SCL=GPIO3 (pin 5)
+- I2C ingeschakeld? `sudo raspi-config nonint do_i2c 0`
+
+### Logbestanden bekijken
+```bash
+# Systemd logs:
+journalctl -u data-collector.service -f
+journalctl -u azure-upload.service -f
+
+# Applicatie logs:
+tail -f collector.log
+tail -f uploader.log
+```
+

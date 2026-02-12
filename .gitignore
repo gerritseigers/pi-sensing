@@ -40,3 +40,4 @@ site/
 # Wheel / packaging
 *.whl
 pip-wheel-metadata/
+data/
