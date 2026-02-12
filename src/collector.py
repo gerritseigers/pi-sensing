@@ -18,6 +18,7 @@ from utils import (
 from pulse import PulseCounter
 from ads1115_reader import ADCManager
 from iot import IoTHubSender
+import led
 
 # Configuration paths and environment
 CONFIG_PATH = os.environ.get("EDGE_CONFIG", "/home/gerrit/Projects/pi-sensing/config.yaml")
@@ -71,6 +72,12 @@ def main():
     device_id = cfg.get("device", {}).get("id", DEVICE_ID)
     calibration = cfg.get("calibration", {})
     iot_cfg = cfg.get("iot", {}) if isinstance(cfg, dict) else {}
+
+    # Initialize LED status indicator
+    led_cfg = cfg.get("led", {})
+    led_enabled = bool(led_cfg.get("enabled", True))
+    led_name = led_cfg.get("name", "ACT")
+    status_led = led.init_led(led_name, led_enabled)
     iot_enabled = bool(iot_cfg.get("enabled", True))
     heartbeat_seconds = int(iot_cfg.get("heartbeat_seconds", 60))
     send_settings_on_start = bool(iot_cfg.get("send_settings_on_start", True))
@@ -120,6 +127,9 @@ def main():
     file_handle, writer, csv_path = csv_writer(USB_MOUNT, device_id, header)
     logger.info("Writing CSV to %s", csv_path)
 
+    # Signal successful startup
+    led.startup()
+
     # Uncomment to align sampling to the next minute
     # align_to_next_minute()
 
@@ -142,6 +152,9 @@ def main():
         file_handle.flush()
         os.fsync(file_handle.fileno())
 
+        # Blink LED to indicate successful sample
+        led.heartbeat()
+
         # Send data to IoT Hub
         if iot:
             try:
@@ -153,6 +166,7 @@ def main():
                 iot.send("data", payload)
             except Exception:
                 logger.warning("IoT data-bericht kon niet worden verstuurd")
+                led.error()
 
             # Heartbeat
             if next_heartbeat and time.time() >= next_heartbeat:
@@ -173,3 +187,5 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         pass
+    finally:
+        led.stop()

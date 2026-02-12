@@ -5,13 +5,16 @@ gpio_backends: [pigpio, lgpio, rpi]
 lgpio_chip_priority: [0, 4, 10, 11, 12, 13]
 device:
   id: "pi-node-02"
-  site: "Farm-X"
-  location: "Barn-1"
+  site: "Farm-02"
+  location: "Barn-02"
 storage: { daily_rotate: true }
 iot:
   enabled: true          # zet op false om IoT Hub te pauzeren
   heartbeat_seconds: 15  # interval voor "I am alive"
   send_settings_on_start: true
+led:
+  enabled: true          # ACT LED knippert bij elke sample
+  name: "ACT"            # LED naam (ACT of PWR)
 pulses:
   - { name: "fan_rpm", gpio: 17, pull_up: true, edge: "falling", debounce_us: 5000 }
   - { name: "meter_pulses", gpio: 27, pull_up: true, edge: "falling", debounce_us: 2000 }
