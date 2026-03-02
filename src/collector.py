@@ -19,11 +19,11 @@ from pulse import PulseCounter
 from ads1115_reader import ADCManager
 from iot import IoTHubSender
 import led
+import ext_led
 
 # Configuration paths and environment
-CONFIG_PATH = os.environ.get("EDGE_CONFIG", "/home/gerrit/Projects/pi-sensing/config.yaml")
+CONFIG_PATH = os.environ.get("EDGE_CONFIG", str(Path(__file__).parent.parent / "config.yaml"))
 USB_MOUNT = Path(os.environ.get("USB_MOUNT", "/mnt/usb-data"))
-DEVICE_ID = os.environ.get("DEVICE_ID", "pi-node-01")
 
 # Set up logging (console and file)
 logger = setup_logger("collector", logfile="collector.log")
@@ -69,15 +69,23 @@ def main():
     cfg = load_config(CONFIG_PATH)
     sampling_seconds = int(cfg.get("sampling_seconds", 60))
     pulses_enabled = bool(cfg.get("pulses_enabled", True))
-    device_id = cfg.get("device", {}).get("id", DEVICE_ID)
+    # Priority: yaml config > environment var > hardcoded default
+    device_id = cfg.get("device", {}).get("id") or os.environ.get("DEVICE_ID") or "pi-node-01"
     calibration = cfg.get("calibration", {})
     iot_cfg = cfg.get("iot", {}) if isinstance(cfg, dict) else {}
 
-    # Initialize LED status indicator
+    # Initialize LED status indicators
     led_cfg = cfg.get("led", {})
     led_enabled = bool(led_cfg.get("enabled", True))
     led_name = led_cfg.get("name", "ACT")
     status_led = led.init_led(led_name, led_enabled)
+    
+    ext_led_cfg = cfg.get("status_led", {})
+    ext_led_enabled = bool(ext_led_cfg.get("enabled", False))
+    ext_led_gpio = int(ext_led_cfg.get("gpio_pin", 22))  # Default to GPIO22 (pin 15) if not specified
+    ext_led_backend = ext_led_cfg.get("backend")
+    ext_status_led = ext_led.init_ext_led(ext_led_gpio, ext_led_enabled, ext_led_backend)
+
     iot_enabled = bool(iot_cfg.get("enabled", True))
     heartbeat_seconds = int(iot_cfg.get("heartbeat_seconds", 60))
     send_settings_on_start = bool(iot_cfg.get("send_settings_on_start", True))
@@ -128,7 +136,8 @@ def main():
     logger.info("Writing CSV to %s", csv_path)
 
     # Signal successful startup
-    led.startup()
+    status_led.startup()
+    ext_status_led.startup()
 
     # Uncomment to align sampling to the next minute
     # align_to_next_minute()
@@ -153,7 +162,8 @@ def main():
         os.fsync(file_handle.fileno())
 
         # Blink LED to indicate successful sample
-        led.heartbeat()
+        status_led.heartbeat()
+        ext_status_led.heartbeat()
 
         # Send data to IoT Hub
         if iot:
@@ -166,7 +176,8 @@ def main():
                 iot.send("data", payload)
             except Exception:
                 logger.warning("IoT data-bericht kon niet worden verstuurd")
-                led.error()
+                status_led.error()
+                ext_status_led.error()
 
             # Heartbeat
             if next_heartbeat and time.time() >= next_heartbeat:
@@ -188,4 +199,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
-        led.stop()
+        status_led.stop()
+        ext_status_led.stop()

@@ -16,7 +16,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=ROOT_DIR / ".env")
 
 # Configuration from environment variables
-CONFIG_PATH = os.environ.get("EDGE_CONFIG", "/home/gerrit/Projects/pi-sensing/config.yaml")
+CONFIG_PATH = os.environ.get("EDGE_CONFIG", str(ROOT_DIR / "config.yaml"))
 USB_MOUNT = Path(os.environ.get("USB_MOUNT", "/mnt/usb-data"))
 CONTAINER = os.environ.get("AZURE_BLOB_CONTAINER", "stable-sensing")
 

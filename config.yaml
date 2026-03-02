@@ -15,6 +15,10 @@ iot:
 led:
   enabled: true          # ACT LED knippert bij elke sample
   name: "ACT"            # LED naam (ACT of PWR)
+status_led:
+  enabled: false         # External GPIO LED (RP5 IO header)
+  gpio_pin: 22           # GPIO pin (BCM numbering, default: 27 = pin 13)
+  backend: null          # GPIO backend: "lgpio", "RPi.GPIO", "pigpio", or null for auto-detect
 pulses:
   - { name: "fan_rpm", gpio: 17, pull_up: true, edge: "falling", debounce_us: 5000 }
   - { name: "meter_pulses", gpio: 27, pull_up: true, edge: "falling", debounce_us: 2000 }
@@ -35,6 +39,22 @@ i2c_adcs:
       - { name: "volt_6", channel: 1, samples: 5 }
       - { name: "volt_7", channel: 2, samples: 5 }
       - { name: "volt_8", channel: 3, samples: 5 }
+  - address: 0x4a
+    name: "ads2"
+    gain: 1
+    channels:
+      - { name: "volt_9", channel: 0, samples: 5 }
+      - { name: "volt_10", channel: 1, samples: 5 }
+      - { name: "volt_11", channel: 2, samples: 5 }
+      - { name: "volt_12", channel: 3, samples: 5 }
+  - address: 0x4b
+    name: "ads3"
+    gain: 1
+    channels:
+      - { name: "volt_13", channel: 0, samples: 5 }
+      - { name: "volt_14", channel: 1, samples: 5 }
+      - { name: "volt_15", channel: 2, samples: 5 }
+      - { name: "volt_16", channel: 3, samples: 5 }
 calibration:
   volt_1: { scale: 1.000, offset: 0.000 }
   volt_2: { scale: 1.000, offset: 0.000 }
@@ -44,3 +64,11 @@ calibration:
   volt_6: { scale: 1.000, offset: 0.000 }
   volt_7: { scale: 1.000, offset: 0.000 }
   volt_8: { scale: 1.000, offset: 0.000 }
+  volt_9: { scale: 1.000, offset: 0.000 }
+  volt_10: { scale: 1.000, offset: 0.000 }
+  volt_11: { scale: 1.000, offset: 0.000 }
+  volt_12: { scale: 1.000, offset: 0.000 }
+  volt_13: { scale: 1.000, offset: 0.000 }
+  volt_14: { scale: 1.000, offset: 0.000 }
+  volt_15: { scale: 1.000, offset: 0.000 }
+  volt_16: { scale: 1.000, offset: 0.000 }

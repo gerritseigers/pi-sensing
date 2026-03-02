@@ -59,15 +59,13 @@ sudo systemctl enable azure-upload.timer
 sudo systemctl start azure-upload.timer
 ```
 
-De meegeleverde units verwachten de virtuele omgeving op `/home/gerrit/Projects/pi-sensing/.venv` en zetten GPIO-env vars:
+De meegeleverde units verwachten de virtuele omgeving op `/home/<user>/Projects/pi-sensing/.venv` en zetten GPIO-env vars:
 ```
 Environment=GPIO_BACKENDS=lgpio,rpi
 Environment=PULSE_SKIP_PIGPIO=1
 Environment=LGPIO_CHIP_PRIORITY=4,0,10,11,12,13
-ExecStart=/home/gerrit/Projects/pi-sensing/.venv/bin/python /home/gerrit/Projects/pi-sensing/src/collector.py
+ExecStart=%h/Projects/pi-sensing/.venv/bin/python %h/Projects/pi-sensing/src/collector.py
 ```
-Pas paden aan als je een andere gebruikersnaam of locatie gebruikt.
-
 ### Enable pigpiod daemon (if using pigpio backend)
 Pigpio may not have a packaged daemon. Build & install from source:
 ```bash
