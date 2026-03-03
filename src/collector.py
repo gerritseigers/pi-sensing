@@ -102,6 +102,7 @@ def main():
         else:
             logger.warning("No /dev/gpiochip* devices found; disabling pulse counters")
             pulses_enabled = False
+
     # Export config-driven backend ordering/env overrides before initializing counters
     backends_cfg = cfg.get("gpio_backends")
     if backends_cfg and isinstance(backends_cfg, list):
@@ -194,10 +195,22 @@ def main():
         time.sleep(sleep_duration)
 
 if __name__ == "__main__":
+    adc_manager = None
     try:
+        adc_manager = None
         main()
     except KeyboardInterrupt:
         pass
     finally:
-        status_led.stop()
-        ext_status_led.stop()
+        # Attempt to stop LEDs and ADC background sampler if present
+        try:
+            led.stop()
+        except Exception:
+            pass
+        try:
+            # If an ADCManager was created in main it will be referenced in the module scope; stop it.
+            if 'adc_manager' in globals() and globals().get('adc_manager'):
+                globals().get('adc_manager').stop()
+        except Exception:
+            pass
+        #ext_status_led.stop()
