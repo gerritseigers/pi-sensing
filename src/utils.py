@@ -74,11 +74,20 @@ def csv_writer(root: Path, device_id: str, header):
 def apply_calibration(vals: dict, cal: dict | None):
     """
     Apply calibration (scale and offset) to ADC values if calibration is provided.
+    Channels with None values are left as None.
     """
     if not cal:
         return vals
     out = {}
     for k, v in vals.items():
+        if v is None:
+            out[k] = None
+            continue
         c = cal.get(k)
-        out[k] = v * float(c.get("scale", 1.0)) + float(c.get("offset", 0.0)) if c else v
+        if c:
+            scale = float(c.get("scale", 1.0))
+            offset = float(c.get("offset", 0.0))
+            out[k] = v * scale + offset
+        else:
+            out[k] = v
     return out

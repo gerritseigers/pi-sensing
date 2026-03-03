@@ -37,11 +37,32 @@ cd pi-sensing
 ```
 
 ## 4. Python virtualenv en dependencies
+> 💡 **GUI requirement**: the project uses a small PyQt5 interface to display voltages and
+> Wi‑Fi status. On a Pi the easiest way to satisfy that is to install the system package
+> first (it contains prebuilt ARM wheels) or use [piwheels](https://www.piwheels.org) when
+> installing inside the virtual environment.
+
+You can either:
+1. install the Qt bindings globally:
+   ```bash
+   sudo apt-get install -y python3-pyqt5
+   ```
+   then the `pip install` step below will skip building PyQt5, or
+2. stay entirely in the venv and pull from piwheels:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install --upgrade pip
+   pip install -i https://www.piwheels.org/simple -r requirements.txt adafruit-blinka lgpio
+   ```
+
+Installing the package outside the venv **before** you create/activate it is fine;
+Python will happily reuse the system installation when the same version is requested.
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt adafruit-blinka lgpio
+pip install -r requirements.txt
 ```
 - `adafruit-blinka` is nodig voor de ADS1115 driver.
 - `lgpio` gebruikt de `/dev/gpiochip*` interface; pigpio is optioneel.

@@ -4,21 +4,21 @@ upload_minutes: 60    # how often to attempt Azure upload (minutes)
 gpio_backends: [pigpio, lgpio, rpi]
 lgpio_chip_priority: [0, 4, 10, 11, 12, 13]
 device:
-  id: "pi-node-02"
-  site: "Farm-02"
-  location: "Barn-02"
+  id: "pi-node-staldemo"
+  site: "WTS-Innovatron"
+  location: "My Desk"
 storage: { daily_rotate: true }
 iot:
-  enabled: true          # zet op false om IoT Hub te pauzeren
+  enabled: false          # zet op false om IoT Hub te pauzeren
   heartbeat_seconds: 15  # interval voor "I am alive"
   send_settings_on_start: true
 led:
   enabled: true          # ACT LED knippert bij elke sample
   name: "ACT"            # LED naam (ACT of PWR)
 status_led:
-  enabled: false         # External GPIO LED (RP5 IO header)
-  gpio_pin: 22           # GPIO pin (BCM numbering, default: 27 = pin 13)
-  backend: null          # GPIO backend: "lgpio", "RPi.GPIO", "pigpio", or null for auto-detect
+  enabled: true         # External GPIO LED (RP5 IO header)
+  gpio_pin: 22           # GPIO pin (BCM numbering, default: 22 = pin 15)
+  backend: lgpio          # GPIO backend: "lgpio", "RPi.GPIO", "pigpio", or null for auto-detect
 pulses:
   - { name: "fan_rpm", gpio: 17, pull_up: true, edge: "falling", debounce_us: 5000 }
   - { name: "meter_pulses", gpio: 27, pull_up: true, edge: "falling", debounce_us: 2000 }

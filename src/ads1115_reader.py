@@ -105,9 +105,18 @@ class ADCManager:
         self.sample_interval_ms = max(10, int(sample_interval_ms))
         self.window_size = max(1, int(window_size))
 
-        # Internal storage for recent samples: {channel: {"raw": deque, "voltage": deque, "gain": last_gain}}
+        # prepopulate _data structure with empty deques for all channels to avoid key errors later
         self._data = {}
         self._lock = threading.Lock()
+        for grp in self.groups:
+            for name in grp.inputs.keys():
+                self._data[name] = {
+                    "raw": deque(maxlen=self.window_size),
+                    "voltage": deque(maxlen=self.window_size),
+                    "gain": grp.ads.gain,  # or None if you prefer
+                }
+
+        # Internal storage for recent samples: {channel: {"raw": deque, "voltage": deque, "gain": last_gain}}
         self._running = True
         self._thread: Optional[threading.Thread] = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
@@ -131,6 +140,7 @@ class ADCManager:
                             entry["raw"].append(meta.get("raw"))
                             entry["voltage"].append(meta.get("voltage"))
                             entry["gain"] = meta.get("gain")
+
                 time.sleep(sleep_s)
             except Exception:
                 # Keep thread alive on transient errors
@@ -178,3 +188,6 @@ class ADCManager:
             except Exception:
                 pass
         return readings
+
+    def get_channel_names(self) -> list[str]:
+        return sorted(self._data.keys())

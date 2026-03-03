@@ -85,6 +85,8 @@ def main():
     ext_led_gpio = int(ext_led_cfg.get("gpio_pin", 22))  # Default to GPIO22 (pin 15) if not specified
     ext_led_backend = ext_led_cfg.get("backend")
     ext_status_led = ext_led.init_ext_led(ext_led_gpio, ext_led_enabled, ext_led_backend)
+    ext_status_led.startup()
+    ext_status_led.heartbeat()
 
     iot_enabled = bool(iot_cfg.get("enabled", True))
     heartbeat_seconds = int(iot_cfg.get("heartbeat_seconds", 60))
@@ -129,7 +131,7 @@ def main():
             logger.warning("IoT Hub geactiveerd maar geen IOTHUB_DEVICE_CONNECTION_STRING; IoT uit")
 
     # Capture an initial reading to learn which ADC channels are present
-    adc_channels = sorted(adc_manager.read_all().keys())
+    adc_channels = adc_manager.get_channel_names()
     header = create_headers(counters, adc_channels)
 
     # Open CSV file for writing
