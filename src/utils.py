@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# -----------------------------
+# load the configuration from a YAML file, with environment variable expansion
+# -----------------------------
 def load_config(p):
     """
     Load YAML configuration file and expand environment variables in values.
@@ -28,9 +31,13 @@ def load_config(p):
             return [exp(x) for x in v]
         else:
             return v
+
     return exp(cfg)
 
-def setup_logger(name="edge", level=logging.INFO, logfile=None):
+# -----------------------------
+# Setup the logger for terminal and file output with UTC timestamps
+# -----------------------------
+def setup_logger(name = "edge", level = logging.INFO, logfile = None):
     """
     Set up a logger with UTC timestamps, stream output, and optional file logging.
     logfile: If provided, logs will also be written to this file.
@@ -38,24 +45,34 @@ def setup_logger(name="edge", level=logging.INFO, logfile=None):
     logger = logging.getLogger(name)
     logger.setLevel(level)
     formatter = logging.Formatter("%(asctime)sZ [%(levelname)s] %(message)s", datefmt="%Y-%m-%dT%H:%M:%S")
+    
     # Console handler
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
+    
     # File handler
     if logfile:
         file_handler = logging.FileHandler(logfile)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
+
     logging.Formatter.converter = time.gmtime
+
     return logger
 
+# -----------------------------
+# Check if directory is there, otherwise create it
+# -----------------------------
 def ensure_dir(p: Path):
     """
     Ensure a directory exists, creating it if necessary.
     """
     p.mkdir(parents=True, exist_ok=True)
 
+# -----------------------------
+# Create a csv writer for the given device and header, returning file handle, writer, and path
+# -----------------------------
 def csv_writer(root: Path, device_id: str, header):
     """
     Open a CSV file for appending, write header if new, and return file handle and writer.
@@ -69,8 +86,12 @@ def csv_writer(root: Path, device_id: str, header):
         w.writerow(header)
         f.flush()
         os.fsync(f.fileno())
+
     return f, w, fpath
 
+# -----------------------------
+# Convert given voltages to calibrated values using provided calibration data
+# -----------------------------
 def apply_calibration(vals: dict, cal: dict | None):
     """
     Apply calibration (scale and offset) to ADC values if calibration is provided.

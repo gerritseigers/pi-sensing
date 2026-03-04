@@ -78,7 +78,7 @@ pip install -r requirements.txt
   - GPIO17 → fysieke pin 11 (fan_rpm), interne pull-up staat aan; tik naar GND voor test.
   - GPIO27 → fysieke pin 13 (meter_pulses), idem.
 - Externe status‑LED:
-  - Gebruik GPIO22 (fysieke pin 15) om conflicten met pulse‑inputs te vermijden. Stel `status_led.gpio_pin: 22` in de config in.
+  - Gebruik GPIO23 (fysieke pin 16) om conflicten met pulse‑inputs te vermijden. Stel `status_led.gpio_pin: 22` in de config in.
 - Optioneel USB-opslag: mount op `/mnt/usb-data` of gebruik de standaard map.
 
 ## 6. Data-directory

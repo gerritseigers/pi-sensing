@@ -3,14 +3,14 @@ import threading
 import logging
 import os
 
-logger = logging.getLogger("pulse")
+# logger = logging.getLogger("pulse")
 
 class PulseCounter:
     """
     PulseCounter counts pulses on a GPIO pin using either pigpio or RPi.GPIO.
     For testing on non-Pi systems, hardware-specific code is commented out.
     """
-    def __init__(self, gpio, pull_up=True, falling=True, debounce_us=2000, backend_order=None):
+    def __init__(self, gpio, pull_up = True, falling = True, debounce_us = 2000, backend_order = None, logger = None):
         """
         Initialize the pulse counter.
         gpio: GPIO pin number
@@ -26,6 +26,7 @@ class PulseCounter:
         self._lock = threading.Lock()
         self._backend = None
         self._cb = None
+        self.logger = logger or logging.getLogger("pulse")
         # Allow explicit backend order (list of strings) else defer to env var
         self._backend_order = backend_order
 
@@ -50,18 +51,18 @@ class PulseCounter:
         """Start pulse counting, trying backends in priority order.
 
         Backend order can be set via config passed externally (not yet) or
-        environment variable GPIO_BACKENDS="pigpio,lgpio,rpi". An env var
+        environment variable GPIO_BACKENDS="lgpio,rpi". An env var
         PULSE_SKIP_PIGPIO=1 forces skipping pigpio.
         """
         backend_order = self._backend_order or os.environ.get("GPIO_BACKENDS", "pigpio,lgpio,rpi").split(',')
         skip_pigpio = os.environ.get("PULSE_SKIP_PIGPIO") == "1"
 
-        logger.info("PulseCounter init gpio=%s backends=%s skip_pigpio=%s", self.gpio, backend_order, skip_pigpio)
+        self.logger.info("PulseCounter init gpio=%s backends=%s skip_pigpio=%s", self.gpio, backend_order, skip_pigpio)
 
         for backend in [b.strip() for b in backend_order]:
             if backend == "pigpio":
                 if skip_pigpio:
-                    logger.debug("Skipping pigpio due to PULSE_SKIP_PIGPIO=1")
+                    self.logger.debug("Skipping pigpio due to PULSE_SKIP_PIGPIO=1")
                     continue
                 try:
                     import pigpio, io, contextlib, sys
@@ -70,14 +71,14 @@ class PulseCounter:
                         pi = pigpio.pi()
                     if not pi.connected:
                         pi.stop()
-                        logger.debug("pigpio daemon not connected; skipping pigpio backend")
+                        self.logger.debug("pigpio daemon not connected; skipping pigpio backend")
                         continue
                     # Basic heuristic: if hardware revision unknown skip silently
                     try:
                         rev = pigpio.get_hardware_revision()
                         if rev == 0:  # pigpio returns 0 if not a Pi
                             pi.stop()
-                            logger.debug("pigpio hardware revision 0 (non-Pi); skipping pigpio backend")
+                            self.logger.debug("pigpio hardware revision 0 (non-Pi); skipping pigpio backend")
                             continue
                     except Exception:
                         pass
@@ -92,7 +93,7 @@ class PulseCounter:
                     logger.info(f"PulseCounter started on GPIO {self.gpio} using pigpio")
                     return
                 except Exception as e:
-                    logger.debug(f"pigpio backend failed: {e}")
+                    self.logger.debug(f"pigpio backend failed: {e}")
                     continue
             elif backend == "lgpio":
                 try:
@@ -113,11 +114,11 @@ class PulseCounter:
                                 if p not in ordered:
                                     ordered.append(p)
                             chips = ordered
-                            logger.debug(f"lgpio: chip priority applied -> {[c.replace('/dev/gpiochip','') for c in chips]}")
+                            self.logger.debug(f"lgpio: chip priority applied -> {[c.replace('/dev/gpiochip','') for c in chips]}")
                         except Exception as e_prio:
-                            logger.debug(f"lgpio: priority parse failed: {e_prio}")
+                            self.logger.debug(f"lgpio: priority parse failed: {e_prio}")
                     if not chips:
-                        logger.debug("lgpio: no gpiochip devices present")
+                        self.logger.debug("lgpio: no gpiochip devices present")
                         continue
                     claimed = False
                     for chip_path in chips:
@@ -138,11 +139,11 @@ class PulseCounter:
                             lgpio.gpio_set_debounce_micros(h, self.gpio, int(self.debounce_us))
                             self._cb = lgpio.callback(h, self.gpio, edge, _lg_cb)
                             self._backend = ("lgpio", (h,))
-                            logger.info(f"PulseCounter started on GPIO {self.gpio} using lgpio (chip {chip_num})")
+                            self.logger.info(f"PulseCounter started on GPIO {self.gpio} using lgpio (chip {chip_num})")
                             claimed = True
                             break
                         except Exception as e_chip:
-                            logger.debug(f"lgpio: chip {chip_num} claim failed for line {self.gpio}: {e_chip}")
+                            self.logger.debug(f"lgpio: chip {chip_num} claim failed for line {self.gpio}: {e_chip}")
                             try:
                                 lgpio.gpiochip_close(h)
                             except Exception:
@@ -151,10 +152,10 @@ class PulseCounter:
                     if claimed:
                         return
                     else:
-                        logger.debug(f"lgpio backend: no chip accepted line {self.gpio}")
+                        self.logger.debug(f"lgpio backend: no chip accepted line {self.gpio}")
                         continue
                 except Exception as e:
-                    logger.debug(f"lgpio backend failed: {e}")
+                    self.logger.debug(f"lgpio backend failed: {e}")
                     continue
             elif backend == "rpi":
                 try:
@@ -169,16 +170,17 @@ class PulseCounter:
                     logger.info(f"PulseCounter started on GPIO {self.gpio} using RPi.GPIO")
                     return
                 except Exception as e:
-                    logger.debug(f"RPi.GPIO backend failed: {e}")
+                    self.logger.debug(f"RPi.GPIO backend failed: {e}")
                     continue
 
-        logger.error(f"Failed to initialize any GPIO backend for GPIO {self.gpio}; pulse counting disabled")
+        self.logger.error(f"Failed to initialize any GPIO backend for GPIO {self.gpio}; pulse counting disabled")
 
     def snapshot_and_reset(self):
         """
         Return the current count and reset to zero.
         """
         with self._lock:
+            self.logger.info(f"GPIO {self.gpio} pulse count snapshot: {self.count}")
             c = self.count
             self.count = 0
             return c
@@ -194,7 +196,7 @@ class PulseCounter:
             if self._cb:
                 self._cb.cancel()
             b.stop()
-            logger.info(f"PulseCounter on GPIO {self.gpio} stopped (pigpio)")
+            self.logger.info(f"PulseCounter on GPIO {self.gpio} stopped (pigpio)")
         elif name == "lgpio":
             try:
                 import lgpio
@@ -205,10 +207,10 @@ class PulseCounter:
                         pass
                 h = b[0]
                 lgpio.gpiochip_close(h)
-                logger.info(f"PulseCounter on GPIO {self.gpio} stopped (lgpio)")
+                self.logger.info(f"PulseCounter on GPIO {self.gpio} stopped (lgpio)")
             except Exception as e:
-                logger.debug(f"lgpio cleanup failed: {e}")
+                self.logger.debug(f"lgpio cleanup failed: {e}")
         else:
             import RPi.GPIO as GPIO
             GPIO.cleanup(self.gpio)
-            logger.info(f"PulseCounter on GPIO {self.gpio} stopped (RPi.GPIO)")
+            self.logger.info(f"PulseCounter on GPIO {self.gpio} stopped (RPi.GPIO)")

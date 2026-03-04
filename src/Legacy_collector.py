@@ -18,7 +18,7 @@ from utils import (
 from pulse import PulseCounter
 from ads1115_reader import ADCManager
 from iot import IoTHubSender
-import led
+import Legacy_led
 import ext_led
 
 # Configuration paths and environment
@@ -69,6 +69,7 @@ def main():
     cfg = load_config(CONFIG_PATH)
     sampling_seconds = int(cfg.get("sampling_seconds", 60))
     pulses_enabled = bool(cfg.get("pulses_enabled", True))
+    
     # Priority: yaml config > environment var > hardcoded default
     device_id = cfg.get("device", {}).get("id") or os.environ.get("DEVICE_ID") or "pi-node-01"
     calibration = cfg.get("calibration", {})
@@ -78,7 +79,7 @@ def main():
     led_cfg = cfg.get("led", {})
     led_enabled = bool(led_cfg.get("enabled", True))
     led_name = led_cfg.get("name", "ACT")
-    status_led = led.init_led(led_name, led_enabled)
+    status_led = Legacy_led.init_led(led_name, led_enabled)
     
     ext_led_cfg = cfg.get("status_led", {})
     ext_led_enabled = bool(ext_led_cfg.get("enabled", False))
@@ -131,8 +132,7 @@ def main():
             logger.warning("IoT Hub geactiveerd maar geen IOTHUB_DEVICE_CONNECTION_STRING; IoT uit")
 
     # Capture an initial reading to learn which ADC channels are present
-    adc_channels = adc_manager.get_channel_names()
-    header = create_headers(counters, adc_channels)
+    header = create_headers(counters, adc_manager.get_channel_names())
 
     # Open CSV file for writing
     file_handle, writer, csv_path = csv_writer(USB_MOUNT, device_id, header)
@@ -157,7 +157,7 @@ def main():
         # Read raw ADC values, calibrate them, then write in column order
         adc_raw = adc_manager.read_all()
         adc_calibrated = apply_calibration(adc_raw, calibration)
-        adc_values = [adc_calibrated.get(channel) for channel in adc_channels]
+        adc_values = [adc_calibrated.get(channel) for channel in adc_manager.get_channel_names()]
 
         # Write all sensor values to CSV
         writer.writerow([timestamp_utc] + pulse_values + adc_values)
@@ -174,7 +174,7 @@ def main():
                 payload = {
                     "timestamp": timestamp_utc,
                     "pulses": {name: val for (name, _), val in zip(counters, pulse_values)},
-                    "adc": {channel: val for channel, val in zip(adc_channels, adc_values)},
+                    "adc": {channel: val for channel, val in zip(adc_manager.get_channel_names(), adc_values)},
                 }
                 iot.send("data", payload)
             except Exception:
@@ -206,7 +206,7 @@ if __name__ == "__main__":
     finally:
         # Attempt to stop LEDs and ADC background sampler if present
         try:
-            led.stop()
+            Legacy_led.stop()
         except Exception:
             pass
         try:

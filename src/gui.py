@@ -13,8 +13,9 @@ CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, parent=None):
+    def __init__(self, adc_manager, parent=None):
         super().__init__(parent)
+        self.adc_manager = adc_manager
         self.setWindowTitle("Pi Sensing - Diagnostics")
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
@@ -140,12 +141,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.table.item(r, 2).setText("-")
 
 
-def main():
-    app = QtWidgets.QApplication(sys.argv)
-    w = MainWindow()
-    w.show()
-    sys.exit(app.exec_())
+# def main():
+#     app = QtWidgets.QApplication(sys.argv)
+#     w = MainWindow()
+#     w.show()
+#     sys.exit(app.exec_())
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()

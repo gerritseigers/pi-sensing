@@ -1,6 +1,6 @@
 [Unit]
 Description=Pi Edge Sensing: data collector (UTC minute sampling)
-After=network-online.target pigpiod.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -11,7 +11,7 @@ EnvironmentFile=%h/Projects/pi-sensing/.env
 Environment=GPIO_BACKENDS=lgpio,rpi
 Environment=PULSE_SKIP_PIGPIO=1
 Environment=LGPIO_CHIP_PRIORITY=4,0,10,11,12,13
-ExecStart=%h/Projects/pi-sensing/venv/bin/python %h/Projects/pi-sensing/src/collector.py
+ExecStart=%h/Projects/pi-sensing/venv/bin/python %h/Projects/pi-sensing/src/mainApp.py
 Restart=always
 RestartSec=5
 
