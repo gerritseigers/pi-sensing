@@ -13,7 +13,6 @@ import ext_led
 from collector_service import CollectorService
 from gui import MainWindow   # your GUI file
 
-
 # -----------------------------
 # Configuration path
 # -----------------------------

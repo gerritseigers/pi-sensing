@@ -47,6 +47,23 @@ class PulseCounter:
         with self._lock:
             self.count += 1
 
+    def _cb_lgpio(self, chip, gpio, level, tick):
+        """
+        Callback for lgpio backend.
+        """
+        if level in (0, 1):
+            if (
+                (self.falling and level == 0) 
+                or 
+                (not self.falling and level == 1)
+            ):
+                with self._lock:
+                    self.count += 1
+                self.logger.debug(
+                    "GPIO %s edge detected (lgpio) level=%s count=%s",
+                    gpio, level, self.count
+                )
+
     def start(self):
         """Start pulse counting, trying backends in priority order.
 
@@ -128,22 +145,36 @@ class PulseCounter:
                             flags = lgpio.SET_PULL_UP if self.pull_up else lgpio.SET_PULL_DOWN
                             edge = lgpio.FALLING_EDGE if self.falling else lgpio.RISING_EDGE
 
-                            def _lg_cb(chip, gpio, level, tick):
-                                if level in (0, 1):
-                                    if (self.falling and level == 0) or (not self.falling and level == 1):
-                                        with self._lock:
-                                            self.count += 1
+                            # def _lg_cb(chip, gpio, level, tick):
+                            #     if level in (0, 1):
+                            #         if (self.falling and level == 0) or (not self.falling and level == 1):
+                            #             with self._lock:
+                            #                 self.count += 1
 
-                            # Claim alerts so callbacks actually fire; set pull bias via flags
-                            lgpio.gpio_claim_alert(h, self.gpio, edge, flags)
+                            # free pin if program previously crashed while claiming it, then try claiming again
+                            try:
+                                lgpio.gpio_claim_output(h, self.gpio)  # try claiming as output to free if needed
+                                lgpio.gpio_release(h, self.gpio)
+                            except Exception:
+                                pass
+
+                            # Claim alerts so callbacks actually fire; set pull bias via flags.
+                            for attempt in range(3):
+                                try:
+#                                    lgpio.gpio_claim_alert(h, self.gpio, edge, flags)
+                                    lgpio.gpio_claim_alert(h, self.gpio, edge, flags)
+                                    break
+                                except Exception:
+                                    time.sleep(0.2)
+
                             lgpio.gpio_set_debounce_micros(h, self.gpio, int(self.debounce_us))
-                            self._cb = lgpio.callback(h, self.gpio, edge, _lg_cb)
+                            self._cb = lgpio.callback(h, self.gpio, edge, self._cb_lgpio)
                             self._backend = ("lgpio", (h,))
                             self.logger.info(f"PulseCounter started on GPIO {self.gpio} using lgpio (chip {chip_num})")
                             claimed = True
                             break
                         except Exception as e_chip:
-                            self.logger.debug(f"lgpio: chip {chip_num} claim failed for line {self.gpio}: {e_chip}")
+                            self.logger.error(f"lgpio: chip {chip_num} claim failed for line {self.gpio}: {e_chip}")
                             try:
                                 lgpio.gpiochip_close(h)
                             except Exception:
@@ -167,7 +198,7 @@ class PulseCounter:
                     btime = max(1, int(self.debounce_us / 1000))
                     edge = GPIO.FALLING if self.falling else GPIO.RISING
                     GPIO.add_event_detect(self.gpio, edge, callback=self._cb_rpi, bouncetime=btime)
-                    logger.info(f"PulseCounter started on GPIO {self.gpio} using RPi.GPIO")
+                    self.logger.info(f"PulseCounter started on GPIO {self.gpio} using RPi.GPIO")
                     return
                 except Exception as e:
                     self.logger.debug(f"RPi.GPIO backend failed: {e}")

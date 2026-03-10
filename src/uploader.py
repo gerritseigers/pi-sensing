@@ -31,12 +31,15 @@ def _client():
     conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
     acct_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "")
     sas = os.environ.get("AZURE_STORAGE_SAS_TOKEN", "")
+    
     if conn_str:
         logger.debug("Using connection string auth")
         return BlobServiceClient.from_connection_string(conn_str)
+
     if acct_url and sas:
         logger.debug("Using account URL + SAS auth")
         return BlobServiceClient(account_url=acct_url, credential=sas)
+
     raise RuntimeError("No Azure credentials given.")
 
 def list_candidates():
@@ -141,6 +144,7 @@ def main():
         except Exception as e:
             logger.error(f"Upload error: {e}")
             print(f"Upload error: {e}", file=sys.stderr)
+            
         elapsed = time.time() - loop_started
         sleep_sec = max(0, upload_minutes * 60 - elapsed)
         time.sleep(sleep_sec)

@@ -110,7 +110,6 @@ class CollectorService:
                 self.ext_status_led.heartbeat()
 
                 #timestamp_utc = datetime.now(timezone.utc).isoformat()
-                #self.logger.info("Collecting data at %s", timestamp_utc)
                 timestamp_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
                 self.logger.info("Collecting data at %s", timestamp_utc)
 
@@ -135,7 +134,6 @@ class CollectorService:
                 self.file_handle.flush()
                 os.fsync(self.file_handle.fileno())
 
-
                 # IoT send
                 if self.iot:
                     payload = {
@@ -145,6 +143,7 @@ class CollectorService:
                     }
                     try:
                         self.iot.send("data", payload)
+                        self.logger.info("IoT data sent successfully")
 
                     except Exception:
                         self.logger.exception("IoT send failed")
