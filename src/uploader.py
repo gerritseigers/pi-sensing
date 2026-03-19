@@ -107,6 +107,7 @@ def main():
         cfg = load_config(CONFIG_PATH)
     except Exception as e:
         logger.warning(f"Could not load config {CONFIG_PATH}: {e}; using defaults")
+        
     device_cfg = cfg.get("device", {}) if isinstance(cfg, dict) else {}
     site = str(device_cfg.get("site", "")).strip()
     location = str(device_cfg.get("location", "")).strip()

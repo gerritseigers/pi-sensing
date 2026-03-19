@@ -9,3 +9,4 @@ azure-iot-device==2.14.0
 # Leaving it out avoids pip trying to build from source inside the venv
 adafruit-blinka==8.70.0 # This is needed for the adafruit-circuitpython-ads1x15 package, but it is not compatible with the Raspberry Pi's system Python.  Installing it in the venv allows us to use the ads1x15 package without affecting the system Python.
 lgpio==0.2.2.0  # This is a dependency of pigpio, but it is not compatible with the Raspberry Pi's system Python.  Installing it in the venv allows us to use pigpio without affecting the system Python.
+adafruit-circuitpython-neopixel-spi>=1.0.14

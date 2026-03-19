@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 import sys
 import socket
 import subprocess
@@ -8,15 +9,26 @@ from PyQt5 import QtWidgets, QtCore
 
 from ads1115_reader import ADCManager
 from utils import load_config
+from version import __version__
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, adc_manager, parent=None):
+    def __init__(self, adc_manager, logger=None, parent=None):
         super().__init__(parent)
         self.adc_manager = adc_manager
-        self.setWindowTitle("Pi Sensing - Diagnostics")
+
+        # Resolve log file path from the logger's FileHandler if available
+        self._logpath = None
+        if logger:
+            for handler in logger.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    self._logpath = Path(handler.baseFilename)
+                    break
+        if not self._logpath:
+            self._logpath = Path(__file__).parent / "collector.log"
+        self.setWindowTitle(f"Pi Sensing v{__version__} - Diagnostics")
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
         layout = QtWidgets.QVBoxLayout(central)
@@ -35,31 +47,37 @@ class MainWindow(QtWidgets.QMainWindow):
         status_layout.addWidget(self.lbl_azure_status, 1, 1)
         status_layout.addWidget(QtWidgets.QLabel("IP address:"), 2, 0)
         status_layout.addWidget(self.lbl_ip, 2, 1)
-        status_layout.addWidget(QtWidgets.QLabel("WiFi SSID:"), 3, 0)
+        status_layout.addWidget(QtWidgets.QLabel("Network:"), 3, 0)
         status_layout.addWidget(self.lbl_wifi, 3, 1)
 
         layout.addWidget(status_box)
 
-        # ADC table
-        self.table = QtWidgets.QTableWidget(16, 3)
-        self.table.setHorizontalHeaderLabels(["Channel", "Raw (HEX)", "Voltage (V)"])
-        self.table.verticalHeader().setVisible(False)
-        for r in range(16):
-            item = QtWidgets.QTableWidgetItem(f"AIN{r}")
-            item.setFlags(item.flags() ^ QtCore.Qt.ItemIsEditable)
-            self.table.setItem(r, 0, item)
-            self.table.setItem(r, 1, QtWidgets.QTableWidgetItem("-"))
-            self.table.setItem(r, 2, QtWidgets.QTableWidgetItem("-"))
-
-        layout.addWidget(self.table)
-
-        # Load config and ADC manager
+        # ADC table — fixed 16 rows, window auto-sizes to show all without scrollbars
         cfg = load_config(CONFIG_PATH) if CONFIG_PATH.exists() else {}
         self.adc_manager = None
         try:
             self.adc_manager = ADCManager(cfg.get("i2c_adcs", []))
         except Exception as exc:
             print("ADC manager init failed:", exc)
+
+        self.table = QtWidgets.QTableWidget(16, 3)
+        self.table.setHorizontalHeaderLabels(["Channel", "Raw (HEX)", "Voltage (V)"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        # Disable scrollbars so the table fully expands to show all rows
+        self.table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.table.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
+        self.table.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        for r in range(16):
+            item = QtWidgets.QTableWidgetItem("-")
+            item.setFlags(item.flags() ^ QtCore.Qt.ItemIsEditable)
+            self.table.setItem(r, 0, item)
+            self.table.setItem(r, 1, QtWidgets.QTableWidgetItem("-"))
+            self.table.setItem(r, 2, QtWidgets.QTableWidgetItem("-"))
+
+        layout.addWidget(self.table)
 
         # Timer to refresh UI
         self.timer = QtCore.QTimer(self)
@@ -83,31 +101,47 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         self.lbl_ip.setText(ip)
 
-        # Try iwgetid for SSID (may not be available)
-        ssid = "unknown"
+        # Show active connection: WiFi SSID or Ethernet interface name
+        connection = "unknown"
         try:
-            res = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=1)
+            res = subprocess.run(
+                ["nmcli", "-t", "-f", "NAME,TYPE,DEVICE,STATE", "connection", "show", "--active"],
+                capture_output=True, text=True, timeout=2,
+            )
             if res.returncode == 0:
-                ssid = res.stdout.strip() or "unknown"
+                for line in res.stdout.strip().splitlines():
+                    parts = line.split(":")
+                    if len(parts) >= 4 and parts[3] == "activated" and parts[1] != "loopback":
+                        conn_type = parts[1]
+                        device = parts[2]
+                        if "wireless" in conn_type or "wifi" in conn_type:
+                            # Try to get the SSID name
+                            ssid_res = subprocess.run(
+                                ["iwgetid", device, "-r"],
+                                capture_output=True, text=True, timeout=1,
+                            )
+                            ssid = ssid_res.stdout.strip()
+                            connection = ssid if ssid else device
+                        else:
+                            connection = device  # e.g. "eth0"
+                        break
         except Exception:
             pass
-        self.lbl_wifi.setText(ssid)
+        self.lbl_wifi.setText(connection)
 
     def _update_azure_status(self):
-        # Parse collector.log for last IoT Hub connection messages
-        logpath = Path(__file__).parent.parent / "collector.log"
         last_time = "-"
         status = "Unknown"
-        if logpath.exists():
+        if self._logpath and self._logpath.exists():
             try:
-                for line in reversed(logpath.read_text(encoding="utf-8").splitlines()):
-                    if "IoT Hub verbonden" in line:
+                for line in reversed(self._logpath.read_text(encoding="utf-8").splitlines()):
+                    if "IoT data sent successfully" in line:
                         last_time = (line.split("Z", 1)[0] + "Z") if "Z" in line else line
                         status = "Connected"
                         break
-                    if "IoT Hub connectie faalde" in line or "IoT Hub connectie" in line:
+                    if "IoT send failed" in line or "IoT Hub" in line:
                         last_time = (line.split("Z", 1)[0] + "Z") if "Z" in line else line
-                        status = "Disconnected"
+                        status = "Error"
                         break
             except Exception:
                 pass
@@ -122,8 +156,9 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             readings = {}
 
-        # Sort keys for stable ordering
-        keys = sorted(readings.keys())
+        # Sort keys numerically (e.g. volt_2 before volt_10)
+        # enable sorted function when needed, currently order is as per config which is fine
+        keys = list(readings.keys())
         # Fill table rows
         for r in range(16):
             if r < len(keys):

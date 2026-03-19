@@ -106,8 +106,8 @@ class CollectorService:
             loop_started = time.time()
 
             try:
-                # LED heartbeat -> show the world we are busy collecting data, and also indicate IoT send status
-                self.ext_status_led.heartbeat()
+                # Amber walklight while collecting data
+                self.ext_status_led.measuring()
 
                 #timestamp_utc = datetime.now(timezone.utc).isoformat()
                 timestamp_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -134,8 +134,9 @@ class CollectorService:
                 self.file_handle.flush()
                 os.fsync(self.file_handle.fileno())
 
-                # IoT send
+                # IoT send — show upload status on LEDs
                 if self.iot:
+                    self.ext_status_led.uploading()
                     payload = {
                         "timestamp": timestamp_utc,
                         "pulses": {name: val for (name, _), val in zip(self.counters, pulse_values)},
@@ -144,10 +145,14 @@ class CollectorService:
                     try:
                         self.iot.send("data", payload)
                         self.logger.info("IoT data sent successfully")
+                        self.ext_status_led.upload_success()
 
                     except Exception:
                         self.logger.exception("IoT send failed")
-                        self.ext_status_led.error()
+                        self.ext_status_led.upload_error()
+                else:
+                    # No IoT — still confirm data cycle completed
+                    self.ext_status_led.upload_success()
 
             except Exception:
                 self.logger.exception("Collector loop crashed")

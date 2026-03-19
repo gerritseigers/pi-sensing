@@ -15,8 +15,12 @@ iot:
   send_settings_on_start: true
 status_led:
   enabled: true         # External GPIO LED (RP5 IO header)
-  gpio_pin: 23           # GPIO pin (BCM numbering, default: 23 = pin 16)
-  backend: lgpio          # GPIO backend: "lgpio", "RPi.GPIO", "pigpio", or null for auto-detect
+  gpio_pin: 23          # GPIO pin (BCM numbering)
+  backend: lgpio        # GPIO backend: "lgpio", "RPi.GPIO", "pigpio", or null for auto-detect
+led_ring:
+  enabled: true         # WS281x/NeoPixel ring - uses SPI MOSI (GPIO10, physical pin 19) on Pi 5
+  led_count: 12
+  brightness: 0.375     # 0.0-1.0
 pulses:
   - { name: "fan_rpm", gpio: 17, pull_up: true, edge: "falling", debounce_us: 5000 }
   - { name: "meter_pulses", gpio: 27, pull_up: true, edge: "falling", debounce_us: 2000 }
