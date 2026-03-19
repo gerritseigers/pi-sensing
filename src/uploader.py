@@ -5,6 +5,8 @@ import time
 import argparse
 from pathlib import Path
 from datetime import datetime, timezone
+from urllib.parse import quote
+from urllib.parse import urlparse
 
 from utils import setup_logger, load_config
 from dotenv import load_dotenv
@@ -24,20 +26,58 @@ CONTAINER = os.environ.get("AZURE_BLOB_CONTAINER", "stable-sensing")
 ACTIVE_PREFIX = os.environ.get("AZURE_BLOB_PREFIX", "").strip("/")
 ACTIVE_DEVICE_ID = os.environ.get("DEVICE_ID", "pi-node-01")
 
+
+def _looks_like_valid_account_name(name: str) -> bool:
+    # Azure storage account names: 3-24 chars, lowercase letters and numbers.
+    return name.isalnum() and name.islower() and 3 <= len(name) <= 24
+
+
+def _parse_connection_string(conn_str: str) -> dict:
+    parts = {}
+    for item in conn_str.split(";"):
+        if "=" not in item:
+            continue
+        k, v = item.split("=", 1)
+        parts[k.strip()] = v.strip().strip('"').strip("'")
+    return parts
+
 def _client():
     """
     Create and return an Azure BlobServiceClient using connection string or account URL + SAS token.
     """
-    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
-    acct_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "")
-    sas = os.environ.get("AZURE_STORAGE_SAS_TOKEN", "")
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip().strip('"').strip("'")
+    acct_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "").strip().strip('"').strip("'")
+    sas = os.environ.get("AZURE_STORAGE_SAS_TOKEN", "").strip().strip('"').strip("'")
     
     if conn_str:
-        logger.debug("Using connection string auth")
+        parts = _parse_connection_string(conn_str)
+        account_name = parts.get("AccountName", "")
+        endpoint_suffix = parts.get("EndpointSuffix", "")
+        if not _looks_like_valid_account_name(account_name):
+            raise RuntimeError(
+                "Invalid Azure Storage AccountName in AZURE_STORAGE_CONNECTION_STRING "
+                f"({account_name!r}). Expected 3-24 lowercase letters/numbers."
+            )
+        if not endpoint_suffix:
+            raise RuntimeError("Missing EndpointSuffix in AZURE_STORAGE_CONNECTION_STRING")
+        logger.info("Using connection string auth (account=%s, endpoint=%s)", account_name, endpoint_suffix)
         return BlobServiceClient.from_connection_string(conn_str)
 
     if acct_url and sas:
-        logger.debug("Using account URL + SAS auth")
+        parsed = urlparse(acct_url)
+        host = parsed.netloc
+        if parsed.scheme not in {"http", "https"} or not host:
+            raise RuntimeError(
+                "Invalid AZURE_STORAGE_ACCOUNT_URL. Expected full URL like "
+                "https://<account>.blob.core.windows.net"
+            )
+        account_name = host.split(".", 1)[0]
+        if not _looks_like_valid_account_name(account_name):
+            raise RuntimeError(
+                "Invalid storage account name in AZURE_STORAGE_ACCOUNT_URL "
+                f"({account_name!r}). Expected 3-24 lowercase letters/numbers."
+            )
+        logger.info("Using account URL + SAS auth (host=%s)", host)
         return BlobServiceClient(account_url=acct_url, credential=sas)
 
     raise RuntimeError("No Azure credentials given.")
@@ -54,18 +94,36 @@ def target_blob_path(local):
     """
     Build the blob path in Azure using prefix, device ID, and local filename.
     Uses the UTC date so each run in a day overwrites the same blob.
+    URL-encodes each path segment to handle spaces and special characters.
     """
     date_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     stamped = f"{date_utc}{local.suffix}"
-    parts = [p for p in [ACTIVE_PREFIX, ACTIVE_DEVICE_ID] if p]
-    return "/".join(parts + [stamped])
+    
+    # URL-encode prefix if present (handles spaces in site/location from config)
+    if ACTIVE_PREFIX:
+        # Split prefix by "/" and encode each segment
+        prefix_parts = [quote(p, safe="") for p in ACTIVE_PREFIX.split("/")]
+        prefix_encoded = "/".join(prefix_parts)
+    else:
+        prefix_encoded = ""
+    
+    device_encoded = quote(ACTIVE_DEVICE_ID, safe="")
+    stamped_encoded = quote(stamped, safe=".")  # Keep . for file extension
+    
+    parts = [p for p in [prefix_encoded, device_encoded, stamped_encoded] if p]
+    return "/".join(parts)
 
 def upload_once():
     """
     Upload all new CSV files to Azure Blob Storage and mark them as uploaded with a .ok file.
     """
+    container = CONTAINER.strip().strip('"').strip("'")
+    if not container or "/" in container or " " in container:
+        raise RuntimeError(
+            "Invalid AZURE_BLOB_CONTAINER value. Container name must not contain spaces or '/'."
+        )
     cli = _client()
-    cont = cli.get_container_client(CONTAINER)
+    cont = cli.get_container_client(container)
     try:
         cont.create_container()
     except Exception:
@@ -107,7 +165,7 @@ def main():
         cfg = load_config(CONFIG_PATH)
     except Exception as e:
         logger.warning(f"Could not load config {CONFIG_PATH}: {e}; using defaults")
-        
+
     device_cfg = cfg.get("device", {}) if isinstance(cfg, dict) else {}
     site = str(device_cfg.get("site", "")).strip()
     location = str(device_cfg.get("location", "")).strip()
@@ -143,7 +201,7 @@ def main():
         try:
             upload_once()
         except Exception as e:
-            logger.error(f"Upload error: {e}")
+            logger.exception("Upload error: %s", e)
             print(f"Upload error: {e}", file=sys.stderr)
             
         elapsed = time.time() - loop_started
