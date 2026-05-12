@@ -1,0 +1,218 @@
+
+#!/usr/bin/env python3
+# Main data collection script for Pi Edge Sensing
+
+import os
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+# Project utility imports
+from utils import (
+    apply_calibration,
+    csv_writer,
+    ensure_dir,
+    load_config,
+    setup_logger,
+)
+from pulse import PulseCounter
+from ads1115_reader import ADCManager
+from iot import IoTHubSender
+import Legacy_led
+import ext_led
+
+# Configuration paths and environment
+CONFIG_PATH = os.environ.get("EDGE_CONFIG", str(Path(__file__).parent.parent / "config.yaml"))
+USB_MOUNT = Path(os.environ.get("USB_MOUNT", "/mnt/usb-data"))
+
+# Set up logging (console and file)
+logger = setup_logger("collector", logfile="collector.log")
+
+def align_to_next_minute() -> None:
+    """
+    Sleep until the next clock minute to keep sampling windows aligned.
+    """
+    now = time.time()
+    time.sleep(60 - (now % 60))
+
+def initialize_pulse_counters(pulse_configs):
+    """
+    Start every configured pulse counter and return (name, counter) tuples.
+    """
+    counters = []
+    chip_priority_env = os.environ.get("LGPIO_CHIP_PRIORITY")
+    if chip_priority_env:
+        logger.info("Using lgpio chip priority override: %s", chip_priority_env)
+    for pulse_cfg in pulse_configs:
+        counter = PulseCounter(
+            gpio=int(pulse_cfg["gpio"]),
+            pull_up=bool(pulse_cfg.get("pull_up", True)),
+            falling=pulse_cfg.get("edge", "falling").lower() == "falling",
+            debounce_us=int(pulse_cfg.get("debounce_us", 2000)),
+        )
+        counter.start()
+        counters.append((pulse_cfg["name"], counter))
+    return counters
+
+def create_headers(counters, adc_channels):
+    """
+    Build CSV header names for pulse counts and ADC readings.
+    """
+    pulse_columns = [f"pulse_{name}_count" for name, _ in counters]
+    adc_columns = [f"adc_{channel}_voltage_v" for channel in adc_channels]
+    return ["timestamp_utc"] + pulse_columns + adc_columns
+
+def main():
+    """
+    Main data collection loop. Reads pulses and ADC, writes to CSV.
+    """
+    cfg = load_config(CONFIG_PATH)
+    sampling_seconds = int(cfg.get("sampling_seconds", 60))
+    pulses_enabled = bool(cfg.get("pulses_enabled", True))
+    
+    # Priority: yaml config > environment var > hardcoded default
+    device_id = cfg.get("device", {}).get("id") or os.environ.get("DEVICE_ID") or "pi-node-01"
+    calibration = cfg.get("calibration", {})
+    iot_cfg = cfg.get("iot", {}) if isinstance(cfg, dict) else {}
+
+    # Initialize LED status indicators
+    led_cfg = cfg.get("led", {})
+    led_enabled = bool(led_cfg.get("enabled", True))
+    led_name = led_cfg.get("name", "ACT")
+    status_led = Legacy_led.init_led(led_name, led_enabled)
+    
+    ext_led_cfg = cfg.get("status_led", {})
+    ext_led_enabled = bool(ext_led_cfg.get("enabled", False))
+    ext_led_gpio = int(ext_led_cfg.get("gpio_pin", 22))  # Default to GPIO22 (pin 15) if not specified
+    ext_led_backend = ext_led_cfg.get("backend")
+    ext_status_led = ext_led.init_ext_led(ext_led_gpio, ext_led_enabled, ext_led_backend)
+    ext_status_led.startup()
+    ext_status_led.heartbeat()
+
+    iot_enabled = bool(iot_cfg.get("enabled", True))
+    heartbeat_seconds = int(iot_cfg.get("heartbeat_seconds", 60))
+    send_settings_on_start = bool(iot_cfg.get("send_settings_on_start", True))
+    iot_conn = os.environ.get("IOTHUB_DEVICE_CONNECTION_STRING", "")
+
+    # Ensure USB mount directory exists
+    ensure_dir(USB_MOUNT)
+
+    # Detect if any gpiochip character devices exist; if none, disable pulses automatically
+    if pulses_enabled:
+        gpiochips = sorted(Path('/dev').glob('gpiochip*'))
+        if gpiochips:
+            logger.info("Detected gpiochips: %s", ', '.join(p.name for p in gpiochips))
+        else:
+            logger.warning("No /dev/gpiochip* devices found; disabling pulse counters")
+            pulses_enabled = False
+
+    # Export config-driven backend ordering/env overrides before initializing counters
+    backends_cfg = cfg.get("gpio_backends")
+    if backends_cfg and isinstance(backends_cfg, list):
+        os.environ.setdefault("GPIO_BACKENDS", ",".join(str(b) for b in backends_cfg))
+    chip_prio_cfg = cfg.get("lgpio_chip_priority")
+    if chip_prio_cfg and isinstance(chip_prio_cfg, list):
+        os.environ.setdefault("LGPIO_CHIP_PRIORITY", ",".join(str(c) for c in chip_prio_cfg))
+
+    counters = initialize_pulse_counters(cfg.get("pulses", [])) if pulses_enabled else []
+    adc_manager = ADCManager(cfg.get("i2c_adcs", []))
+
+    # IoT Hub client
+    iot = None
+    if iot_enabled and iot_conn:
+        iot = IoTHubSender(iot_conn, device_id)
+        iot.start()
+        if send_settings_on_start:
+            try:
+                iot.send("settings", cfg)
+            except Exception:
+                logger.warning("IoT settingsbericht kon niet worden verstuurd")
+    else:
+        if iot_enabled:
+            logger.warning("IoT Hub geactiveerd maar geen IOTHUB_DEVICE_CONNECTION_STRING; IoT uit")
+
+    # Capture an initial reading to learn which ADC channels are present
+    header = create_headers(counters, adc_manager.get_channel_names())
+
+    # Open CSV file for writing
+    file_handle, writer, csv_path = csv_writer(USB_MOUNT, device_id, header)
+    logger.info("Writing CSV to %s", csv_path)
+
+    # Signal successful startup
+    status_led.startup()
+    ext_status_led.startup()
+
+    # Uncomment to align sampling to the next minute
+    # align_to_next_minute()
+
+    next_heartbeat = time.time() + heartbeat_seconds if heartbeat_seconds > 0 else None
+    start_time = time.time()
+
+    while True:
+        loop_started = time.time()
+        timestamp_utc = datetime.now(timezone.utc).isoformat()
+        # Get pulse counts (or empty list if disabled)
+        pulse_values = [counter.snapshot_and_reset() for _, counter in counters] if pulses_enabled else []
+
+        # Read raw ADC values, calibrate them, then write in column order
+        adc_raw = adc_manager.read_all()
+        adc_calibrated = apply_calibration(adc_raw, calibration)
+        adc_values = [adc_calibrated.get(channel) for channel in adc_manager.get_channel_names()]
+
+        # Write all sensor values to CSV
+        writer.writerow([timestamp_utc] + pulse_values + adc_values)
+        file_handle.flush()
+        os.fsync(file_handle.fileno())
+
+        # Blink LED to indicate successful sample
+        status_led.heartbeat()
+        ext_status_led.heartbeat()
+
+        # Send data to IoT Hub
+        if iot:
+            try:
+                payload = {
+                    "timestamp": timestamp_utc,
+                    "pulses": {name: val for (name, _), val in zip(counters, pulse_values)},
+                    "adc": {channel: val for channel, val in zip(adc_manager.get_channel_names(), adc_values)},
+                }
+                iot.send("data", payload)
+            except Exception:
+                logger.warning("IoT data-bericht kon niet worden verstuurd")
+                status_led.error()
+                ext_status_led.error()
+
+            # Heartbeat
+            if next_heartbeat and time.time() >= next_heartbeat:
+                try:
+                    uptime = int(time.time() - start_time)
+                    iot.send("heartbeat", {"uptime_s": uptime})
+                except Exception:
+                    logger.warning("IoT heartbeat kon niet worden verstuurd")
+                next_heartbeat = time.time() + heartbeat_seconds if heartbeat_seconds > 0 else None
+
+        # Sleep until next sample
+        elapsed = time.time() - loop_started
+        sleep_duration = max(0.0, sampling_seconds - (elapsed % sampling_seconds))
+        time.sleep(sleep_duration)
+
+if __name__ == "__main__":
+    adc_manager = None
+    try:
+        adc_manager = None
+        main()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Attempt to stop LEDs and ADC background sampler if present
+        try:
+            Legacy_led.stop()
+        except Exception:
+            pass
+        try:
+            # If an ADCManager was created in main it will be referenced in the module scope; stop it.
+            if 'adc_manager' in globals() and globals().get('adc_manager'):
+                globals().get('adc_manager').stop()
+        except Exception:
+            pass
+        #ext_status_led.stop()

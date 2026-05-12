@@ -1,0 +1,239 @@
+
+import os
+import sys
+import time
+import argparse
+from pathlib import Path
+from datetime import datetime, timezone
+from urllib.parse import quote
+from urllib.parse import urlparse
+
+from utils import setup_logger, load_config, pick_storage_target, resolve_storage_root
+from dotenv import load_dotenv
+from azure.storage.blob import BlobServiceClient
+logger = setup_logger("uploader", logfile="uploader.log")
+
+# Load environment variables from .env file
+ROOT_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(dotenv_path=ROOT_DIR / ".env")
+
+# Configuration from environment variables
+CONFIG_PATH = os.environ.get("EDGE_CONFIG", str(ROOT_DIR / "config.yaml"))
+USB_MOUNT = Path(os.environ.get("USB_MOUNT", "/mnt/usb-data"))
+CONTAINER = os.environ.get("AZURE_BLOB_CONTAINER", "stable-sensing")
+ACTIVE_USB_MOUNT = USB_MOUNT
+FALLBACK_USB_MOUNT = ROOT_DIR / "usb-data"
+
+# These are resolved at runtime from config/environment
+ACTIVE_PREFIX = os.environ.get("AZURE_BLOB_PREFIX", "").strip("/")
+ACTIVE_DEVICE_ID = os.environ.get("DEVICE_ID", "pi-node-01")
+
+
+def _looks_like_valid_account_name(name: str) -> bool:
+    # Azure storage account names: 3-24 chars, lowercase letters and numbers.
+    return name.isalnum() and name.islower() and 3 <= len(name) <= 24
+
+
+def _parse_connection_string(conn_str: str) -> dict:
+    parts = {}
+    for item in conn_str.split(";"):
+        if "=" not in item:
+            continue
+        k, v = item.split("=", 1)
+        parts[k.strip()] = v.strip().strip('"').strip("'")
+    return parts
+
+def _client():
+    """
+    Create and return an Azure BlobServiceClient using connection string or account URL + SAS token.
+    """
+    conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip().strip('"').strip("'")
+    acct_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "").strip().strip('"').strip("'")
+    sas = os.environ.get("AZURE_STORAGE_SAS_TOKEN", "").strip().strip('"').strip("'")
+    
+    if conn_str:
+        parts = _parse_connection_string(conn_str)
+        account_name = parts.get("AccountName", "")
+        endpoint_suffix = parts.get("EndpointSuffix", "")
+        if not _looks_like_valid_account_name(account_name):
+            raise RuntimeError(
+                "Invalid Azure Storage AccountName in AZURE_STORAGE_CONNECTION_STRING "
+                f"({account_name!r}). Expected 3-24 lowercase letters/numbers."
+            )
+        if not endpoint_suffix:
+            raise RuntimeError("Missing EndpointSuffix in AZURE_STORAGE_CONNECTION_STRING")
+        logger.info("Using connection string auth (account=%s, endpoint=%s)", account_name, endpoint_suffix)
+        return BlobServiceClient.from_connection_string(conn_str)
+
+    if acct_url and sas:
+        parsed = urlparse(acct_url)
+        host = parsed.netloc
+        if parsed.scheme not in {"http", "https"} or not host:
+            raise RuntimeError(
+                "Invalid AZURE_STORAGE_ACCOUNT_URL. Expected full URL like "
+                "https://<account>.blob.core.windows.net"
+            )
+        account_name = host.split(".", 1)[0]
+        if not _looks_like_valid_account_name(account_name):
+            raise RuntimeError(
+                "Invalid storage account name in AZURE_STORAGE_ACCOUNT_URL "
+                f"({account_name!r}). Expected 3-24 lowercase letters/numbers."
+            )
+        logger.info("Using account URL + SAS auth (host=%s)", host)
+        return BlobServiceClient(account_url=acct_url, credential=sas)
+
+    raise RuntimeError("No Azure credentials given.")
+
+def list_candidates():
+    """
+    List all CSV files in active storage roots.
+    Deduplicate by filename and keep the newest mtime variant.
+    """
+    global ACTIVE_USB_MOUNT
+    ACTIVE_USB_MOUNT = pick_storage_target(USB_MOUNT, FALLBACK_USB_MOUNT, logger=logger)
+
+    roots = [ACTIVE_USB_MOUNT]
+    if FALLBACK_USB_MOUNT != ACTIVE_USB_MOUNT:
+        roots.append(FALLBACK_USB_MOUNT)
+
+    latest_by_name = {}
+    for root in roots:
+        try:
+            for f in root.glob("*.csv"):
+                prev = latest_by_name.get(f.name)
+                if prev is None or f.stat().st_mtime >= prev.stat().st_mtime:
+                    latest_by_name[f.name] = f
+        except Exception as e:
+            logger.warning("Could not scan %s: %s", root, e)
+
+    files = sorted(latest_by_name.values())
+    logger.info("Found %d csv candidates across %s", len(files), ", ".join(str(r) for r in roots))
+    return files
+
+def target_blob_path(local):
+    """
+    Build the blob path in Azure using prefix, device ID, and local filename.
+    Uses the UTC date so each run in a day overwrites the same blob.
+    URL-encodes each path segment to handle spaces and special characters.
+    """
+    date_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamped = f"{date_utc}{local.suffix}"
+    
+    # URL-encode prefix if present (handles spaces in site/location from config)
+    if ACTIVE_PREFIX:
+        # Split prefix by "/" and encode each segment
+        prefix_parts = [quote(p, safe="") for p in ACTIVE_PREFIX.split("/")]
+        prefix_encoded = "/".join(prefix_parts)
+    else:
+        prefix_encoded = ""
+    
+    device_encoded = quote(ACTIVE_DEVICE_ID, safe="")
+    stamped_encoded = quote(stamped, safe=".")  # Keep . for file extension
+    
+    parts = [p for p in [prefix_encoded, device_encoded, stamped_encoded] if p]
+    return "/".join(parts)
+
+def upload_once():
+    """
+    Upload all new CSV files to Azure Blob Storage and mark them as uploaded with a .ok file.
+    """
+    container = CONTAINER.strip().strip('"').strip("'")
+    if not container or "/" in container or " " in container:
+        raise RuntimeError(
+            "Invalid AZURE_BLOB_CONTAINER value. Container name must not contain spaces or '/'."
+        )
+    cli = _client()
+    cont = cli.get_container_client(container)
+    try:
+        cont.create_container()
+    except Exception:
+        pass  # Container may already exist
+    uploaded = 0
+    for f in list_candidates():
+        ok = f.with_suffix(f.suffix + ".ok")
+        # If marker exists, re-upload only if file changed since marker was written
+        if ok.exists():
+            try:
+                if f.stat().st_mtime <= ok.stat().st_mtime:
+                    logger.debug("Skip %s (ok marker newer or same mtime)", f)
+                    continue
+                else:
+                    logger.info("Re-uploading %s (file newer than ok)", f)
+            except FileNotFoundError:
+                # If one of them disappeared in between, just proceed to upload
+                logger.debug("Stat race for %s or %s; proceeding to upload", f, ok)
+        target = target_blob_path(f)
+        logger.info("Uploading %s -> %s", f, target)
+        with open(f, "rb") as fh:
+            cont.upload_blob(name=target, data=fh, overwrite=True)
+        ok.write_text(datetime.now(timezone.utc).isoformat())
+        uploaded += 1
+        logger.info(f"Uploaded {f} to Azure as {target}")
+    if uploaded:
+        logger.info(f"Total files uploaded: {uploaded}")
+    return uploaded
+
+def main():
+    """
+    Main entry point. If --once is given, upload once and exit. Otherwise, run in a loop based on config upload_minutes.
+    """
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--once", action="store_true")
+    args = ap.parse_args()
+    cfg = {}
+    try:
+        cfg = load_config(CONFIG_PATH)
+    except Exception as e:
+        logger.warning(f"Could not load config {CONFIG_PATH}: {e}; using defaults")
+
+    device_cfg = cfg.get("device", {}) if isinstance(cfg, dict) else {}
+    site = str(device_cfg.get("site", "")).strip()
+    location = str(device_cfg.get("location", "")).strip()
+    cfg_device_id = str(device_cfg.get("id", "")).strip() or None
+
+    # Resolve prefix: env overrides, else site/location from config
+    global ACTIVE_PREFIX, ACTIVE_DEVICE_ID, ACTIVE_USB_MOUNT, FALLBACK_USB_MOUNT
+    if os.environ.get("AZURE_BLOB_PREFIX"):
+        ACTIVE_PREFIX = os.environ.get("AZURE_BLOB_PREFIX", "").strip("/")
+    else:
+        parts = [p for p in [site, location] if p]
+        ACTIVE_PREFIX = "/".join(parts)
+
+    ACTIVE_DEVICE_ID = os.environ.get("DEVICE_ID", cfg_device_id or "pi-node-01")
+
+    default_fallback = ROOT_DIR / "usb-data"
+    fallback_mount = Path(os.environ.get("USB_MOUNT_FALLBACK", str(default_fallback)))
+    FALLBACK_USB_MOUNT = fallback_mount
+    ACTIVE_USB_MOUNT = pick_storage_target(USB_MOUNT, fallback_mount, logger=logger)
+    if ACTIVE_USB_MOUNT == fallback_mount:
+        ACTIVE_USB_MOUNT = resolve_storage_root(USB_MOUNT, fallback_mount, logger=logger)
+
+    upload_minutes = int(cfg.get("upload_minutes", 5)) if isinstance(cfg, dict) else 5
+    if upload_minutes <= 0:
+        upload_minutes = 5
+
+    if args.once:
+        uploaded = upload_once()
+        print(f"Uploaded {uploaded} files.")
+        logger.info(f"Uploader ran once, uploaded {uploaded} files.")
+        return
+    logger.info(
+        "Starting continuous upload loop, interval=%d minutes, prefix=%s, device_id=%s",
+        upload_minutes,
+        ACTIVE_PREFIX or "(none)",
+        ACTIVE_DEVICE_ID,
+    )
+    while True:
+        loop_started = time.time()
+        try:
+            upload_once()
+        except Exception as e:
+            logger.exception("Upload error: %s", e)
+            print(f"Upload error: {e}", file=sys.stderr)
+            
+        elapsed = time.time() - loop_started
+        sleep_sec = max(0, upload_minutes * 60 - elapsed)
+        time.sleep(sleep_sec)
+
+if __name__ == '__main__':
+    main()
