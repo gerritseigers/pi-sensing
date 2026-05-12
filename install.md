@@ -82,12 +82,49 @@ pip install -r requirements.txt
 - Optioneel USB-opslag: mount op `/mnt/usb-data` of gebruik de standaard map.
 
 ## 6. Data-directory
+
+De applicatie slaat data op in de volgende volgorde van voorkeur:
+
+1. **Vaste mount** `/mnt/usb-data` (aanbevolen voor productie)
+2. **Automatische detectie** van een USB-stick onder `/media/<user>/...`
+3. **Interne SD-kaart** als fallback: `~/Projects/pi-sensing/usb-data`
+
+Als de vaste mount beschikbaar is, wordt die altijd gebruikt. Raakt de USB los, dan schakelt de applicatie automatisch over naar de interne SD-kaart. Wordt de USB later teruggeplugd, dan schakelt de applicatie terug én kopieert de tussentijdse SD-data automatisch naar de USB-stick.
+
+### Aanbevolen: vaste mount instellen (productie)
+
+**Stap 1 — maak het mountpoint aan en stel rechten in:**
 ```bash
 sudo mkdir -p /mnt/usb-data
 sudo chown $USER:$USER /mnt/usb-data
 sudo chmod u+w /mnt/usb-data
 ```
-Plaats een USB-stick daar als je externe opslag wilt en zorg voor een fstab- of systemd-mount indien gewenst.
+
+**Stap 2 — formatteer de USB-stick met label `PI-DATA`:**
+```bash
+# Vervang /dev/sda1 met het juiste device (controleer met lsblk)
+sudo mkfs.vfat -n PI-DATA /dev/sda1
+```
+Door alle sticks hetzelfde label te geven werkt elke stick op alle 80 apparaten zonder verdere configuratie.
+
+**Stap 3 — voeg een fstab-regel toe:**
+```bash
+sudo nano /etc/fstab
+```
+Voeg onderaan toe (vervang `1000` als je gebruiker een andere uid/gid heeft — controleer met `id`):
+```
+LABEL=PI-DATA  /mnt/usb-data  vfat  defaults,nofail,uid=1000,gid=1000,umask=0022  0  0
+```
+- `nofail` zorgt dat de Pi gewoon opstart als de USB niet aanwezig is.
+- `uid`/`gid` geeft je gebruiker schrijfrechten.
+
+**Stap 4 — test de mount:**
+```bash
+sudo mount -a
+ls /mnt/usb-data
+```
+
+> 💡 **Geen vaste mount?** Geen probleem — de applicatie detecteert een USB-stick automatisch onder `/media/<user>/` en gebruikt die. Als er geen USB aanwezig is wordt data lokaal op de SD-kaart bewaard en later naar de USB gekopieerd zodra die beschikbaar is.
 
 ## 7. Configuratie invullen
 Bewerk `config.yaml` voor je installatie:
@@ -97,24 +134,27 @@ Bewerk `config.yaml` voor je installatie:
 - `calibration` voor offsets en schaal.
 
 ## 8. Azure credentials (.env)
-Maak `.env` in de projectroot:
-```bash
-AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net
-AZURE_BLOB_CONTAINER=stable-sensing
-IOTHUB_DEVICE_CONNECTION_STRING=HostName=...;DeviceId=...;SharedAccessKey=...
+Gebruik de meegeleverde template en vul daarna je echte credentials in:
 
-# Optioneel overrides
-# AZURE_BLOB_PREFIX=site/location
-# USB_MOUNT=/mnt/usb-data
+```bash
+cp .env.example .env
+nano .env
 ```
+
 **Belangrijk:**
-- **Gebruik GEEN quotes** rond de connection strings! Systemd's `EnvironmentFile` neemt quotes letterlijk over, waardoor de Azure SDK foutmeldingen geeft zoals "Connection string missing required connection details".
+- **Gebruik GEEN quotes** rond connection strings of SAS tokens. Systemd `EnvironmentFile` neemt quotes letterlijk over, wat Azure authenticatie kan breken.
+- Zonder `.env` start de uploader wel, maar upload mislukt met `No Azure credentials given`.
 - `IOTHUB_DEVICE_CONNECTION_STRING` is vereist voor IoT Hub telemetrie (heartbeat, data, settings).
 - Haal de IoT Hub connection string op via Azure Portal → IoT Hub → Devices → [device] → Primary Connection String.
 
 ## 9. Systemd services installeren
 
-**Let op:** De service bestanden gebruiken portable systemd specifiers (`%u` voor gebruiker, `%h` voor home dir) en werken met elke gebruikersnaam en installatielokatie. Geen handmatige pad-aanpassingen nodig zolang je de repo in `~/Projects/pi-sensing` hebt gecloned.
+**Let op:** In de huidige eerste deploy-versie zijn de servicebestanden vastgezet op de doel-RP5:
+- gebruiker: `staldemo`
+- projectpad: `/home/staldemo/Projects/pi-sensing`
+- python: `/home/staldemo/Projects/pi-sensing/.venv/bin/python`
+
+Als je op een andere gebruiker of andere installatielocatie deployt, pas dan eerst de paden in de servicefiles aan.
 
 ```bash
 # Installeer de services:
@@ -125,9 +165,10 @@ sudo systemctl enable --now data-collector.service
 sudo systemctl enable --now azure-upload.service
 ```
 - `data-collector.service` draait de sensorlezing en IoT Hub communicatie.
-- `azure-upload.service` uploadt CSV-bestanden naar Azure Blob Storage.
+- `azure-upload.service` draait continu op de achtergrond en uploadt CSV-bestanden naar Azure Blob Storage volgens `upload_minutes` in `config.yaml`.
 - Services laden automatisch de `.env` file via `EnvironmentFile`.
 - **Opmerking:** Zorg dat je `.env` in `~/Projects/pi-sensing/` staat en de juiste Azure connection strings bevat.
+- De meegeleverde `azure-upload.timer` wordt in deze opzet **niet** gebruikt; de uploader heeft al een interne interval-loop.
 
 ## 10. Controleren
 ```bash
@@ -214,8 +255,12 @@ sudo systemctl restart data-collector.service azure-upload.service
 ```
 
 ## 14. Wat er gebeurt
-- `data-collector` schrijft elke minuut CSV naar `/mnt/usb-data`, naam bevat device-id.
-- `uploader` stuurt CSV-bestanden naar Azure Blob, met prefix `site/location/device_id` en timestamp in de bestandsnaam, en markeert uploads met `.ok`.
+- `data-collector` schrijft elke minuut CSV naar het actieve datapad (zie §6). Prioriteit: `/mnt/usb-data` → automatisch gedetecteerde USB → interne SD-kaart (`usb-data/`).
+- Als de USB terugkeert terwijl de applicatie draait, worden SD-kaartdata automatisch naar de USB gekopieerd (één richting: SD → USB).
+- `data-collector.service` start automatisch bij boot.
+- Bij boot start de GUI alleen als er een lokaal display en actieve GUI-sessie beschikbaar zijn; anders draait de applicatie headless door.
+- `uploader` scant zowel de USB als de interne SD-kaart, dedupliceert op bestandsnaam en uploadt alles naar Azure Blob met prefix `site/location/device_id`; uploads worden gemarkeerd met `.ok`.
+- `azure-upload.service` start automatisch bij boot en blijft actief; de uploadfrequentie wordt bepaald door `upload_minutes` in `config.yaml`.
 - Indien `iot.enabled: true` en `IOTHUB_DEVICE_CONNECTION_STRING` gezet, stuurt de collector IoT Hub-berichten:
   - `settings` bij start (config dump)
   - `heartbeat` elke `heartbeat_seconds`
@@ -235,6 +280,7 @@ journalctl -u data-collector.service -n 50 --no-pager
 sudo mkdir -p /mnt/usb-data
 sudo chown $USER:$USER /mnt/usb-data
 ```
+Of controleer de fstab-regel (zie §6). Als de USB niet aanwezig is, schrijft de applicatie automatisch naar de interne SD-kaart — geen actie vereist.
 
 ### IoT Hub berichten worden niet verstuurd
 - Controleer of `IOTHUB_DEVICE_CONNECTION_STRING` in `.env` staat

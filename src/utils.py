@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import csv
+import uuid
 import yaml
 import logging
 from pathlib import Path
@@ -17,7 +18,9 @@ load_dotenv()
 # -----------------------------
 def load_config(p):
     """
-    Load YAML configuration file and expand environment variables in values.
+    @brief Load YAML configuration file with environment variable expansion.
+    @param p Path to YAML configuration file
+    @return Parsed configuration dictionary with environment variables expanded
     """
     with open(p) as f:
         import yaml as y
@@ -39,8 +42,11 @@ def load_config(p):
 # -----------------------------
 def setup_logger(name = "edge", level = logging.INFO, logfile = None):
     """
-    Set up a logger with UTC timestamps, stream output, and optional file logging.
-    logfile: If provided, logs will also be written to this file.
+    @brief Set up logger with UTC timestamps, console and optional file output.
+    @param name Logger name (default "edge")
+    @param level Logging level (default logging.INFO)
+    @param logfile Optional path to log file; if provided, logs are written there too
+    @return Configured logger instance
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
@@ -66,16 +72,135 @@ def setup_logger(name = "edge", level = logging.INFO, logfile = None):
 # -----------------------------
 def ensure_dir(p: Path):
     """
-    Ensure a directory exists, creating it if necessary.
+    @brief Create directory recursively if it does not exist.
+    @param p Path object for directory to ensure
     """
     p.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_storage_root(preferred: Path, fallback: Path | None = None, logger=None) -> Path:
+    """
+    @brief Resolve writable storage root, trying preferred then fallback.
+    @param preferred Preferred storage path
+    @param fallback Fallback path if preferred unavailable (default ~/usb-data)
+    @param logger Optional logger instance
+    @return Path to first writable directory found
+    @throws PermissionError if no writable directory found
+    """
+    log = logger or logging.getLogger("storage")
+    fb = fallback or (Path.home() / "usb-data")
+
+    candidates = []
+    for c in (preferred, fb):
+        if c not in candidates:
+            candidates.append(c)
+
+    last_error = None
+    for path in candidates:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / f".write_test_{uuid.uuid4().hex}"
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write("ok")
+            probe.unlink(missing_ok=True)
+            if path == preferred:
+                log.info("Using data directory: %s", path)
+            else:
+                log.warning("Primary data directory unavailable; using fallback: %s", path)
+            return path
+        except Exception as exc:
+            last_error = exc
+            log.warning("Data directory not writable: %s (%s)", path, exc)
+
+    raise PermissionError(
+        f"No writable data directory found. Tried: {preferred} and {fb}. Last error: {last_error}"
+    )
+
+
+def is_writable_directory(path: Path) -> bool:
+    """
+    @brief Test whether a directory is writable.
+    @param path Directory path to test
+    @return True if directory can be created/written, False otherwise
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".write_test_{uuid.uuid4().hex}"
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write("ok")
+        probe.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def discover_usb_mount(logger=None) -> Path | None:
+    """
+    @brief Auto-discover removable media mount points on the system.
+    @param logger Optional logger instance
+    @return Path to first writable USB mount found, or None if none found
+    """
+    log = logger or logging.getLogger("storage")
+    user = os.environ.get("USER", "")
+    roots = []
+    if user:
+        roots.extend([Path("/media") / user, Path("/run/media") / user])
+    roots.extend([Path("/media"), Path("/run/media")])
+
+    seen = set()
+    for root in roots:
+        if root in seen:
+            continue
+        seen.add(root)
+        if not root.exists() or not root.is_dir():
+            continue
+
+        try:
+            for candidate in sorted(root.iterdir()):
+                if candidate.is_dir() and is_writable_directory(candidate):
+                    log.info("Auto-detected mounted USB data directory: %s", candidate)
+                    return candidate
+        except Exception:
+            continue
+    return None
+
+
+def pick_storage_target(preferred: Path, fallback: Path, logger=None) -> Path:
+    """
+    @brief Choose best available storage target in priority order.
+    @param preferred Preferred mount point
+    @param fallback Fallback mount point if preferred unavailable
+    @param logger Optional logger instance
+    @return Path to chosen writable storage target
+    @throws PermissionError if no writable target found
+    
+    Tries in order: preferred mount, auto-detected USB, fallback mount.
+    """
+    log = logger or logging.getLogger("storage")
+    if is_writable_directory(preferred):
+        return preferred
+
+    detected = discover_usb_mount(logger=log)
+    if detected is not None:
+        return detected
+
+    if is_writable_directory(fallback):
+        return fallback
+
+    raise PermissionError(
+        f"No writable data directory found. Tried preferred={preferred}, fallback={fallback}, and auto-discovery roots."
+    )
 
 # -----------------------------
 # Create a csv writer for the given device and header, returning file handle, writer, and path
 # -----------------------------
 def csv_writer(root: Path, device_id: str, header):
     """
-    Open a CSV file for appending, write header if new, and return file handle and writer.
+    @brief Open or create dated CSV file and prepare for writing.
+    @param root Root directory for CSV file
+    @param device_id Device identifier (used in filename)
+    @param header List of column names for CSV header
+    @return Tuple (file_handle, csv_writer, Path) for writing CSV data
     """
     date_str = datetime.now(timezone.utc).date().isoformat()
     fpath = root / f"{date_str}_{device_id}.csv"
@@ -94,8 +219,13 @@ def csv_writer(root: Path, device_id: str, header):
 # -----------------------------
 def apply_calibration(vals: dict, cal: dict | None):
     """
-    Apply calibration (scale and offset) to ADC values if calibration is provided.
-    Channels with None values are left as None.
+    @brief Apply calibration (scale and offset) to ADC measurement values.
+    @param vals Dictionary of measured values {channel: voltage}
+    @param cal Calibration dictionary {channel: {"scale": float, "offset": float}}
+    @return Dictionary of calibrated values with same keys as input
+    
+    Channels with None values or missing calibration pass through unchanged.
+    Formula: calibrated = (raw * scale) + offset
     """
     if not cal:
         return vals

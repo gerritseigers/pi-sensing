@@ -16,6 +16,12 @@ CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
 
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, adc_manager, logger=None, parent=None):
+        """
+        @brief Initialize Pi Sensing diagnostics GUI window.
+        @param adc_manager ADCManager instance for ADC reading
+        @param logger Logger instance for finding log file path
+        @param parent Parent Qt widget or None
+        """
         super().__init__(parent)
         self.adc_manager = adc_manager
 
@@ -85,11 +91,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.start(1000)
 
     def refresh(self):
+        """
+        @brief Refresh all UI elements (network, Azure status, ADC readings).
+        """
         self._update_network()
         self._update_azure_status()
         self._update_adc()
 
     def _update_network(self):
+        """
+        @brief Update network information (IP address and active connection).
+        """
         # IP detection via UDP trick
         ip = "unknown"
         try:
@@ -130,6 +142,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_wifi.setText(connection)
 
     def _update_azure_status(self):
+        """
+        @brief Update Azure IoT Hub connection status from log file.
+        
+        Parses collector.log for success and error indicators.
+        Sets GUI labels: lbl_azure_time (last connect time) and lbl_azure_status (Connected/Error/Unknown).
+        """
         last_time = "-"
         status = "Unknown"
         if self._logpath and self._logpath.exists():
@@ -139,9 +157,20 @@ class MainWindow(QtWidgets.QMainWindow):
                         last_time = (line.split("Z", 1)[0] + "Z") if "Z" in line else line
                         status = "Connected"
                         break
-                    if "IoT send failed" in line or "IoT Hub" in line:
+                    if (
+                        "IoT send failed" in line
+                        or "IoT Hub connectie faalde" in line
+                        or "IoT Hub client could not connect at startup" in line
+                        or "IoT Hub geactiveerd maar geen IOTHUB_DEVICE_CONNECTION_STRING" in line
+                        or "IoT data not sent; cloud connection unavailable" in line
+                        or "IoT enabled but sender unavailable; cloud upload pending" in line
+                    ):
                         last_time = (line.split("Z", 1)[0] + "Z") if "Z" in line else line
                         status = "Error"
+                        break
+                    if "IoT Hub verbonden voor device" in line:
+                        last_time = (line.split("Z", 1)[0] + "Z") if "Z" in line else line
+                        status = "Connected"
                         break
             except Exception:
                 pass
@@ -149,6 +178,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_azure_status.setText(status)
 
     def _update_adc(self):
+        """
+        @brief Update ADC readings table with latest voltage measurements.
+        """
         if not self.adc_manager:
             return
         try:

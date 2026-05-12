@@ -21,6 +21,14 @@ class ADS1115Group:
     """
 
     def __init__(self, i2c, address, name, gain, channels: List[dict]):
+        """
+        @brief Initialize ADS1115 analog-to-digital converter group.
+        @param i2c I2C bus instance
+        @param address I2C device address (e.g., 0x48)
+        @param name Group name for logging
+        @param gain Amplifier gain (2/3, 1, 2, 4, 8, 16)
+        @param channels List of channel dicts with keys: 'channel', 'name', 'samples'
+        """
         self.name = name
         self.ads = ADS1115(i2c, address=int(address))
         self.ads.gain = GAIN_MAP.get(float(gain), 1)
@@ -33,6 +41,10 @@ class ADS1115Group:
             self.inputs[nm] = {"cfg": ch, "samples": samples, "ain": AnalogIn(self.ads, idx)}
 
     def read_voltages(self) -> Dict[str, float]:
+        """
+        @brief Read averaged voltages from all channels in group.
+        @return Dictionary mapping channel name to voltage value
+        """
         out: Dict[str, float] = {}
         for name, meta in self.inputs.items():
             ain = meta["ain"]
@@ -48,8 +60,8 @@ class ADS1115Group:
 
     def read_raw_and_voltage(self) -> Dict[str, dict]:
         """
-        Return both raw ADC counts and averaged voltage for each input.
-        Structure: {name: {"raw": int, "voltage": float, "gain": float}}
+        @brief Read both raw ADC counts and averaged voltages.
+        @return Dictionary with structure {name: {"raw": int, "voltage": float, "gain": float}}
         """
         out: Dict[str, dict] = {}
         for name, meta in self.inputs.items():
@@ -88,6 +100,12 @@ class ADCManager:
     """
 
     def __init__(self, cfg_list: List[dict], sample_interval_ms: int = 200, window_size: int = 5):
+        """
+        @brief Initialize ADC manager with multiple converter groups.
+        @param cfg_list List of ADS1115 group configuration dictionaries
+        @param sample_interval_ms Sampling interval in milliseconds (default 200)
+        @param window_size Number of samples in moving average window (default 5)
+        """
         self.i2c = busio.I2C(board.SCL, board.SDA)
         self.groups = [
             ADS1115Group(
@@ -122,7 +140,9 @@ class ADCManager:
         self._thread.start()
 
     def _worker(self):
-        """Background sampling loop: poll all groups and store samples."""
+        """
+        @brief Background thread: continuously sample all ADC groups and update moving windows.
+        """
         sleep_s = self.sample_interval_ms / 1000.0
         while self._running:
             try:
@@ -147,14 +167,19 @@ class ADCManager:
                 time.sleep(sleep_s)
 
     def stop(self, timeout: Optional[float] = 1.0):
-        """Stop the background sampler and wait for thread to finish (best-effort)."""
+        """
+        @brief Stop background sampler and wait for thread to finish.
+        @param timeout Maximum time to wait for thread join (seconds)
+        """
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout)
 
     def read_all(self) -> Dict[str, float]:
-        """Return averaged voltages per channel.
-
+        """
+        @brief Get averaged voltage readings for all channels.
+        @return Dictionary mapping channel name to averaged voltage
+        
         Returns: {channel_name: averaged_voltage}
         """
         out: Dict[str, float] = {}
@@ -165,8 +190,10 @@ class ADCManager:
         return out
 
     def read_all_raw(self) -> Dict[str, dict]:
-        """Return averaged raw+voltage readings for all channels.
-
+        """
+        @brief Get averaged raw counts and voltages for all channels.
+        @return Dictionary mapping channel name to raw and voltage data
+        
         Returns: {channel_name: {"raw": avg_raw, "voltage": avg_voltage, "gain": last_gain}}
         """
         out: Dict[str, dict] = {}
@@ -181,6 +208,10 @@ class ADCManager:
 
     # Keep compatibility helper for manual single-shot reads (reads from hardware directly)
     def read_once(self) -> Dict[str, float]:
+        """
+        @brief Manually read all channels once (direct hardware reads, not cached).
+        @return Dictionary mapping channel name to voltage
+        """
         readings: Dict[str, float] = {}
         for grp in self.groups:
             try:
@@ -190,4 +221,8 @@ class ADCManager:
         return readings
 
     def get_channel_names(self) -> list[str]:
+        """
+        @brief Get sorted list of all configured channel names.
+        @return List of channel name strings
+        """
         return sorted(self._data.keys())

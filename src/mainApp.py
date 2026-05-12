@@ -13,6 +13,7 @@ import led_ring
 from status_led_ring import StatusLedRing
 
 from collector_service import CollectorService
+from heartbeat_service import HeartbeatService
 from gui import MainWindow   # your GUI file
 
 # -----------------------------
@@ -110,18 +111,20 @@ def main():
 
     ring_cfg = cfg.get("led_ring", {})
     ring_enabled = bool(ring_cfg.get("enabled", False))
-    ring_count = int(ring_cfg.get("led_count", 12))
+    ring_count = int(ring_cfg.get("led_count", 3))
     ring_brightness = float(ring_cfg.get("brightness", 0.375))
+    ring_pixel_order = str(ring_cfg.get("pixel_order", "GRB"))
 
     ring_status_led = led_ring.init_led_ring(
         led_count=ring_count,
         brightness=ring_brightness,
         enabled=ring_enabled,
+        pixel_order=ring_pixel_order,
     )
 
     status_led = StatusLedRing(ext_status_led, ring_status_led)
 
-    # --- Startup ring progress (4 steps = 3 LEDs each on a 12-pixel ring) ---
+    # --- Startup ring progress states: ADC, Pulses, IoT, Collector ---
     _STARTUP_STEPS = 4
     status_led.startup_step(0, _STARTUP_STEPS, _adc_ok)        # ADC Manager
     status_led.startup_step(1, _STARTUP_STEPS, _pulses_ok)     # Pulse Counters
@@ -139,16 +142,18 @@ def main():
     iot = None
     if iot_enabled and iot_conn:
         iot = IoTHubSender(iot_conn, device_id)
-        iot.start()
-        if send_settings_on_start:
+        iot_started = iot.start()
+        if iot_started and send_settings_on_start:
             try:
                 iot.send("settings", cfg)
             except Exception:
                 logger.warning("IoT settingsbericht kon niet worden verstuurd")
+        if not iot_started:
+            logger.warning("IoT Hub client could not connect at startup")
     else:
         if iot_enabled:
             logger.warning("IoT Hub geactiveerd maar geen IOTHUB_DEVICE_CONNECTION_STRING; IoT uit")
-    status_led.startup_step(2, _STARTUP_STEPS, iot is not None or not iot_enabled)  # IoT Hub
+    status_led.startup_step(2, _STARTUP_STEPS, (iot and iot.client is not None) or not iot_enabled)  # IoT Hub
 
     # -----------------------------
     # GUI — create window now so it appears in log before collector starts.
@@ -168,7 +173,10 @@ def main():
 
     # -----------------------------
     # Collector Service (always active, even without pulses or ADC, to handle CSV and IoT)
+    # Heartbeat Service (sends periodic "I'm alive" messages)
     # -----------------------------
+    collector_ok = False
+    heartbeat = None
     try:
         collector = CollectorService(
             cfg = cfg,
@@ -179,14 +187,22 @@ def main():
             logger = logger
         )
         collector.start()
-        logger.info("CollectorService started")
         status_led.startup_step(3, _STARTUP_STEPS, True)   # Collector Service
+        collector_ok = True
+
+        # Start heartbeat service if IoT is enabled
+        heartbeat = HeartbeatService(cfg, iot=iot, logger=logger)
+        heartbeat.start()
+
     except Exception as e:
         logger.error("Failed to initialize CollectorService: %s", e)
         collector = None
         status_led.startup_step(3, _STARTUP_STEPS, False)
 
-    status_led.startup_complete()
+    if collector_ok:
+        status_led.startup_complete()
+    else:
+        status_led.error()
 
     # -----------------------------
     # Hand control to Qt event loop (GUI) or keep-alive loop (headless)
@@ -208,6 +224,8 @@ def main():
 
     if collector:
         collector.stop()
+    if heartbeat:
+        heartbeat.stop()
     status_led.stop()
     if adc_manager:
         adc_manager.stop()

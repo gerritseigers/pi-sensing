@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 from urllib.parse import urlparse
 
-from utils import setup_logger, load_config
+from utils import setup_logger, load_config, pick_storage_target, resolve_storage_root
 from dotenv import load_dotenv
 from azure.storage.blob import BlobServiceClient
 logger = setup_logger("uploader", logfile="uploader.log")
@@ -21,6 +21,8 @@ load_dotenv(dotenv_path=ROOT_DIR / ".env")
 CONFIG_PATH = os.environ.get("EDGE_CONFIG", str(ROOT_DIR / "config.yaml"))
 USB_MOUNT = Path(os.environ.get("USB_MOUNT", "/mnt/usb-data"))
 CONTAINER = os.environ.get("AZURE_BLOB_CONTAINER", "stable-sensing")
+ACTIVE_USB_MOUNT = USB_MOUNT
+FALLBACK_USB_MOUNT = ROOT_DIR / "usb-data"
 
 # These are resolved at runtime from config/environment
 ACTIVE_PREFIX = os.environ.get("AZURE_BLOB_PREFIX", "").strip("/")
@@ -84,10 +86,28 @@ def _client():
 
 def list_candidates():
     """
-    List all CSV files in the USB mount directory.
+    List all CSV files in active storage roots.
+    Deduplicate by filename and keep the newest mtime variant.
     """
-    files = sorted(USB_MOUNT.glob("*.csv"))
-    logger.info("Found %d csv candidates in %s", len(files), USB_MOUNT)
+    global ACTIVE_USB_MOUNT
+    ACTIVE_USB_MOUNT = pick_storage_target(USB_MOUNT, FALLBACK_USB_MOUNT, logger=logger)
+
+    roots = [ACTIVE_USB_MOUNT]
+    if FALLBACK_USB_MOUNT != ACTIVE_USB_MOUNT:
+        roots.append(FALLBACK_USB_MOUNT)
+
+    latest_by_name = {}
+    for root in roots:
+        try:
+            for f in root.glob("*.csv"):
+                prev = latest_by_name.get(f.name)
+                if prev is None or f.stat().st_mtime >= prev.stat().st_mtime:
+                    latest_by_name[f.name] = f
+        except Exception as e:
+            logger.warning("Could not scan %s: %s", root, e)
+
+    files = sorted(latest_by_name.values())
+    logger.info("Found %d csv candidates across %s", len(files), ", ".join(str(r) for r in roots))
     return files
 
 def target_blob_path(local):
@@ -172,7 +192,7 @@ def main():
     cfg_device_id = str(device_cfg.get("id", "")).strip() or None
 
     # Resolve prefix: env overrides, else site/location from config
-    global ACTIVE_PREFIX, ACTIVE_DEVICE_ID
+    global ACTIVE_PREFIX, ACTIVE_DEVICE_ID, ACTIVE_USB_MOUNT, FALLBACK_USB_MOUNT
     if os.environ.get("AZURE_BLOB_PREFIX"):
         ACTIVE_PREFIX = os.environ.get("AZURE_BLOB_PREFIX", "").strip("/")
     else:
@@ -180,6 +200,13 @@ def main():
         ACTIVE_PREFIX = "/".join(parts)
 
     ACTIVE_DEVICE_ID = os.environ.get("DEVICE_ID", cfg_device_id or "pi-node-01")
+
+    default_fallback = ROOT_DIR / "usb-data"
+    fallback_mount = Path(os.environ.get("USB_MOUNT_FALLBACK", str(default_fallback)))
+    FALLBACK_USB_MOUNT = fallback_mount
+    ACTIVE_USB_MOUNT = pick_storage_target(USB_MOUNT, fallback_mount, logger=logger)
+    if ACTIVE_USB_MOUNT == fallback_mount:
+        ACTIVE_USB_MOUNT = resolve_storage_root(USB_MOUNT, fallback_mount, logger=logger)
 
     upload_minutes = int(cfg.get("upload_minutes", 5)) if isinstance(cfg, dict) else 5
     if upload_minutes <= 0:

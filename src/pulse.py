@@ -2,6 +2,7 @@
 import threading
 import logging
 import os
+import time
 
 # logger = logging.getLogger("pulse")
 
@@ -12,11 +13,13 @@ class PulseCounter:
     """
     def __init__(self, gpio, pull_up = True, falling = True, debounce_us = 2000, backend_order = None, logger = None):
         """
-        Initialize the pulse counter.
-        gpio: GPIO pin number
-        pull_up: Use pull-up resistor
-        falling: Count falling edge (else rising)
-        debounce_us: Debounce time in microseconds
+        @brief Initialize pulse counter for GPIO pin.
+        @param gpio GPIO pin number (BCM numbering)
+        @param pull_up Use internal pull-up resistor
+        @param falling Count falling edge (True) or rising edge (False)
+        @param debounce_us Debounce time in microseconds
+        @param backend_order List of backend names in priority order (or None for env var)
+        @param logger Logger instance or None for default
         """
         self.gpio = gpio
         self.pull_up = pull_up
@@ -32,8 +35,10 @@ class PulseCounter:
 
     def _cb_pigpio(self, gpio, level, tick):
         """
-        Callback for pigpio backend.
-        Increments count on correct edge.
+        @brief Pigpio callback handler for edge detection.
+        @param gpio GPIO pin number
+        @param level Pin level (0 or 1)
+        @param tick Timestamp
         """
         if self.falling and level == 0 or (not self.falling and level == 1):
             with self._lock:
@@ -41,15 +46,19 @@ class PulseCounter:
 
     def _cb_rpi(self, channel):
         """
-        Callback for RPi.GPIO backend.
-        Increments count.
+        @brief RPi.GPIO callback handler for edge detection.
+        @param channel GPIO channel number
         """
         with self._lock:
             self.count += 1
 
     def _cb_lgpio(self, chip, gpio, level, tick):
         """
-        Callback for lgpio backend.
+        @brief lgpio callback handler for edge detection.
+        @param chip GPIO chip number
+        @param gpio GPIO line number
+        @param level Pin level (0 or 1)
+        @param tick Timestamp
         """
         if level in (0, 1):
             if (
@@ -65,11 +74,12 @@ class PulseCounter:
                 )
 
     def start(self):
-        """Start pulse counting, trying backends in priority order.
-
-        Backend order can be set via config passed externally (not yet) or
-        environment variable GPIO_BACKENDS="lgpio,rpi". An env var
-        PULSE_SKIP_PIGPIO=1 forces skipping pigpio.
+        """
+        @brief Start pulse counting using first available GPIO backend.
+        
+        Tries backends in priority order from config or GPIO_BACKENDS environment variable.
+        Respects PULSE_SKIP_PIGPIO=1 env var to skip pigpio.
+        Attempts each backend until one succeeds or all fail.
         """
         backend_order = self._backend_order or os.environ.get("GPIO_BACKENDS", "pigpio,lgpio,rpi").split(',')
         skip_pigpio = os.environ.get("PULSE_SKIP_PIGPIO") == "1"
@@ -107,7 +117,7 @@ class PulseCounter:
                     if self.debounce_us > 0:
                         pi.set_glitch_filter(self.gpio, self.debounce_us)
                     self._cb = pi.callback(self.gpio, edge, self._cb_pigpio)
-                    logger.info(f"PulseCounter started on GPIO {self.gpio} using pigpio")
+                    self.logger.info(f"PulseCounter started on GPIO {self.gpio} using pigpio")
                     return
                 except Exception as e:
                     self.logger.debug(f"pigpio backend failed: {e}")
@@ -208,7 +218,8 @@ class PulseCounter:
 
     def snapshot_and_reset(self):
         """
-        Return the current count and reset to zero.
+        @brief Get current pulse count and reset counter to zero.
+        @return Current pulse count before reset
         """
         with self._lock:
             self.logger.info(f"GPIO {self.gpio} pulse count snapshot: {self.count}")
@@ -218,7 +229,7 @@ class PulseCounter:
 
     def stop(self):
         """
-        Stop pulse counting and clean up resources.
+        @brief Stop pulse counting and clean up GPIO resources.
         """
         if not self._backend:
             return
