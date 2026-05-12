@@ -142,18 +142,15 @@ def main():
     iot = None
     if iot_enabled and iot_conn:
         iot = IoTHubSender(iot_conn, device_id)
-        iot_started = iot.start()
-        if iot_started and send_settings_on_start:
-            try:
-                iot.send("settings", cfg)
-            except Exception:
-                logger.warning("IoT settingsbericht kon niet worden verstuurd")
-        if not iot_started:
-            logger.warning("IoT Hub client could not connect at startup")
+        # Do not connect during startup: GUI/collector should come up immediately.
+        # IoTHubSender reconnects lazily while running when network becomes available.
+        logger.info("IoT Hub configured; deferred connect enabled")
+        if send_settings_on_start:
+            logger.info("IoT settings will be sent when cloud connection becomes available")
     else:
         if iot_enabled:
             logger.warning("IoT Hub geactiveerd maar geen IOTHUB_DEVICE_CONNECTION_STRING; IoT uit")
-    status_led.startup_step(2, _STARTUP_STEPS, (iot and iot.client is not None) or not iot_enabled)  # IoT Hub
+    status_led.startup_step(2, _STARTUP_STEPS, bool(iot) or not iot_enabled)  # IoT Hub (deferred connect)
 
     # -----------------------------
     # GUI — create window now so it appears in log before collector starts.
