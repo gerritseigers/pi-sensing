@@ -5,7 +5,7 @@ import socket
 import subprocess
 from functools import partial
 
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
 
 from ads1115_reader import ADCManager
 from utils import load_config
@@ -59,12 +59,12 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(status_box)
 
         # ADC table — fixed 16 rows, window auto-sizes to show all without scrollbars
-        cfg = load_config(CONFIG_PATH) if CONFIG_PATH.exists() else {}
-        self.adc_manager = None
-        try:
-            self.adc_manager = ADCManager(cfg.get("i2c_adcs", []))
-        except Exception as exc:
-            print("ADC manager init failed:", exc)
+        if self.adc_manager is None:
+            cfg = load_config(CONFIG_PATH) if CONFIG_PATH.exists() else {}
+            try:
+                self.adc_manager = ADCManager(cfg.get("i2c_adcs", []))
+            except Exception as exc:
+                print("ADC manager init failed:", exc)
 
         self.table = QtWidgets.QTableWidget(16, 3)
         self.table.setHorizontalHeaderLabels(["Channel", "Raw (HEX)", "Voltage (V)"])
@@ -89,6 +89,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(1000)
+
+        self._row_ok_color = QtGui.QColor(205, 255, 205)
+        self._row_problem_color = QtGui.QColor(255, 220, 150)
+        self._row_default_color = QtGui.QColor(255, 255, 255)
 
     def refresh(self):
         """
@@ -202,10 +206,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.table.item(r, 0).setText(name)
                 self.table.item(r, 1).setText(raw_hex)
                 self.table.item(r, 2).setText(f"{v:.4f}" if v is not None else "-")
+                row_color = self._row_ok_color if (raw is not None and v is not None) else self._row_problem_color
+                for c in range(3):
+                    self.table.item(r, c).setBackground(row_color)
             else:
                 # Empty row
+                self.table.item(r, 0).setText("-")
                 self.table.item(r, 1).setText("-")
                 self.table.item(r, 2).setText("-")
+                for c in range(3):
+                    self.table.item(r, c).setBackground(self._row_default_color)
 
 
 # def main():

@@ -244,12 +244,43 @@ class CollectorService:
                 ]
 
                 # Read ADC values, apply calibration, and prepare for CSV
-                adc_raw = self.adc_manager.read_all()
-                adc_calibrated = apply_calibration(adc_raw, self.calibration)
+                measuring_problem = False
+                adc_raw = {}
+                try:
+                    adc_raw = self.adc_manager.read_all()
+                    if not isinstance(adc_raw, dict):
+                        measuring_problem = True
+                        adc_raw = {}
+                except Exception:
+                    self.logger.exception("ADC read failed")
+                    measuring_problem = True
+                    adc_raw = {}
+
+                try:
+                    adc_calibrated = apply_calibration(adc_raw, self.calibration)
+                    if not isinstance(adc_calibrated, dict):
+                        measuring_problem = True
+                        adc_calibrated = {}
+                except Exception:
+                    self.logger.exception("ADC calibration failed")
+                    measuring_problem = True
+                    adc_calibrated = {}
+
                 adc_values = [
                     adc_calibrated.get(channel)
                     for channel in self.adc_channels
                 ]
+                valid_adc_count = sum(1 for value in adc_values if value is not None)
+                if any(value is None for value in adc_values):
+                    measuring_problem = True
+
+                if measuring_problem:
+                    self.ext_status_led.measuring_problem()
+                    self.logger.warning(
+                        "Measurement degraded: valid ADC channels=%d/%d",
+                        valid_adc_count,
+                        len(self.adc_channels),
+                    )
 
                 # Write CSV with last known values (even if ADC read failed)
                 row = [timestamp_utc] + pulse_values + adc_values
@@ -267,6 +298,7 @@ class CollectorService:
 
                 # IoT send — show upload status on LEDs
                 if self.iot:
+                    upload_error = False
                     self.ext_status_led.uploading()
                     payload = {
                         "timestamp": timestamp_utc,
@@ -285,7 +317,11 @@ class CollectorService:
 
                     except Exception:
                         self.logger.exception("IoT send failed")
+                        upload_error = True
                         self.ext_status_led.upload_error()
+
+                    if measuring_problem and not upload_error:
+                        self.ext_status_led.measuring_problem()
                 else:
                     if self.iot_enabled:
                         # Cloud is expected but unavailable: keep pending/failure indication (orange).
@@ -294,6 +330,9 @@ class CollectorService:
                     else:
                         # IoT intentionally disabled: local collection cycle is successful.
                         self.ext_status_led.upload_success()
+
+                    if measuring_problem:
+                        self.ext_status_led.measuring_problem()
 
             except Exception:
                 self.logger.exception("Collector loop crashed")
