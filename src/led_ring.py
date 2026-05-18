@@ -10,6 +10,7 @@ Startup sequence:
 
 Measurement cycle:
     measuring()       — blinking orange while collecting data
+    measuring_problem() — magenta double-pulse while measurement read is degraded
     uploading()       — blinking orange while uploading
     upload_success()  — solid green
     upload_error()    — blinking red (persistent until next state)
@@ -210,6 +211,34 @@ class LedRing:
         if not self.enabled or not self._pixels:
             return
         self._start_animation(self._orange_blink_loop)
+
+    def _measuring_problem_anim(self):
+        """
+        @brief Animation loop: magenta double-pulse to indicate ADC read degradation.
+        """
+        warning = (255, 0, 180)
+        while not self._cancel.is_set():
+            for _ in range(2):
+                with self._lock:
+                    self._pixels.fill(warning)
+                    self._pixels.show()
+                if self._cancel.wait(timeout=0.12):
+                    return
+                with self._lock:
+                    self._pixels.fill((0, 0, 0))
+                    self._pixels.show()
+                if self._cancel.wait(timeout=0.12):
+                    return
+            if self._cancel.wait(timeout=0.8):
+                return
+
+    def measuring_problem(self):
+        """
+        @brief Start magenta double-pulse animation to indicate measurement problems.
+        """
+        if not self.enabled or not self._pixels:
+            return
+        self._start_animation(self._measuring_problem_anim)
 
     def uploading(self):
         """

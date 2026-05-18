@@ -80,6 +80,13 @@ class StatusLedRing:
         self._call(self._gpio, "heartbeat")
         self._call(self._ring, "measuring")
 
+    def measuring_problem(self):
+        """Ring: magenta double-pulse blink. GPIO LED: distinct warning blink.
+        @brief Signal measurement read problems (e.g. ADC unavailable/invalid data).
+        """
+        self._call(self._gpio, "measuring_problem")
+        self._call(self._ring, "measuring_problem")
+
     def uploading(self):
         """Ring: blinking orange. GPIO LED: stays as-is.
         @brief Signal data upload in progress (ring only).

@@ -149,9 +149,30 @@ class ADCManager:
                 for grp in self.groups:
                     try:
                         readings = grp.read_raw_and_voltage()
+                        group_failed = False
                     except Exception:
                         readings = {}
+                        group_failed = True
                     with self._lock:
+                        group_channels = list(grp.inputs.keys())
+                        # If a group read fails, mark all its channels unavailable immediately.
+                        if group_failed:
+                            for name in group_channels:
+                                entry = self._data.get(name)
+                                if not entry:
+                                    entry = {
+                                        "raw": deque(maxlen=self.window_size),
+                                        "voltage": deque(maxlen=self.window_size),
+                                        "gain": getattr(grp.ads, "gain", None),
+                                    }
+                                    self._data[name] = entry
+                                entry["raw"].clear()
+                                entry["voltage"].clear()
+                                entry["raw"].append(None)
+                                entry["voltage"].append(None)
+                                entry["gain"] = getattr(grp.ads, "gain", None)
+                            continue
+
                         for name, meta in readings.items():
                             entry = self._data.get(name)
                             if not entry:
@@ -160,6 +181,24 @@ class ADCManager:
                             entry["raw"].append(meta.get("raw"))
                             entry["voltage"].append(meta.get("voltage"))
                             entry["gain"] = meta.get("gain")
+
+                        # If expected channels are missing from this successful read,
+                        # invalidate them so stale values do not linger.
+                        missing = set(group_channels) - set(readings.keys())
+                        for name in missing:
+                            entry = self._data.get(name)
+                            if not entry:
+                                entry = {
+                                    "raw": deque(maxlen=self.window_size),
+                                    "voltage": deque(maxlen=self.window_size),
+                                    "gain": getattr(grp.ads, "gain", None),
+                                }
+                                self._data[name] = entry
+                            entry["raw"].clear()
+                            entry["voltage"].clear()
+                            entry["raw"].append(None)
+                            entry["voltage"].append(None)
+                            entry["gain"] = getattr(grp.ads, "gain", None)
 
                 time.sleep(sleep_s)
             except Exception:
