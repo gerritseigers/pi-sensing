@@ -18,12 +18,12 @@ from utils import (
 from pulse import PulseCounter
 from ads1115_reader import ADCManager
 from iot import IoTHubSender
-import Legacy_led
-import ext_led
+import led
 
 # Configuration paths and environment
-CONFIG_PATH = os.environ.get("EDGE_CONFIG", str(Path(__file__).parent.parent / "config.yaml"))
+CONFIG_PATH = os.environ.get("EDGE_CONFIG", "/home/gerrit/Projects/pi-sensing/config.yaml")
 USB_MOUNT = Path(os.environ.get("USB_MOUNT", "/mnt/usb-data"))
+DEVICE_ID = os.environ.get("DEVICE_ID", "pi-node-01")
 
 # Set up logging (console and file)
 logger = setup_logger("collector", logfile="collector.log")
@@ -69,26 +69,15 @@ def main():
     cfg = load_config(CONFIG_PATH)
     sampling_seconds = int(cfg.get("sampling_seconds", 60))
     pulses_enabled = bool(cfg.get("pulses_enabled", True))
-    
-    # Priority: yaml config > environment var > hardcoded default
-    device_id = cfg.get("device", {}).get("id") or os.environ.get("DEVICE_ID") or "pi-node-01"
+    device_id = cfg.get("device", {}).get("id", DEVICE_ID)
     calibration = cfg.get("calibration", {})
     iot_cfg = cfg.get("iot", {}) if isinstance(cfg, dict) else {}
 
-    # Initialize LED status indicators
+    # Initialize LED status indicator
     led_cfg = cfg.get("led", {})
     led_enabled = bool(led_cfg.get("enabled", True))
     led_name = led_cfg.get("name", "ACT")
-    status_led = Legacy_led.init_led(led_name, led_enabled)
-    
-    ext_led_cfg = cfg.get("status_led", {})
-    ext_led_enabled = bool(ext_led_cfg.get("enabled", False))
-    ext_led_gpio = int(ext_led_cfg.get("gpio_pin", 22))  # Default to GPIO22 (pin 15) if not specified
-    ext_led_backend = ext_led_cfg.get("backend")
-    ext_status_led = ext_led.init_ext_led(ext_led_gpio, ext_led_enabled, ext_led_backend)
-    ext_status_led.startup()
-    ext_status_led.heartbeat()
-
+    status_led = led.init_led(led_name, led_enabled)
     iot_enabled = bool(iot_cfg.get("enabled", True))
     heartbeat_seconds = int(iot_cfg.get("heartbeat_seconds", 60))
     send_settings_on_start = bool(iot_cfg.get("send_settings_on_start", True))
@@ -105,7 +94,6 @@ def main():
         else:
             logger.warning("No /dev/gpiochip* devices found; disabling pulse counters")
             pulses_enabled = False
-
     # Export config-driven backend ordering/env overrides before initializing counters
     backends_cfg = cfg.get("gpio_backends")
     if backends_cfg and isinstance(backends_cfg, list):
@@ -132,15 +120,15 @@ def main():
             logger.warning("IoT Hub geactiveerd maar geen IOTHUB_DEVICE_CONNECTION_STRING; IoT uit")
 
     # Capture an initial reading to learn which ADC channels are present
-    header = create_headers(counters, adc_manager.get_channel_names())
+    adc_channels = sorted(adc_manager.read_all().keys())
+    header = create_headers(counters, adc_channels)
 
     # Open CSV file for writing
     file_handle, writer, csv_path = csv_writer(USB_MOUNT, device_id, header)
     logger.info("Writing CSV to %s", csv_path)
 
     # Signal successful startup
-    status_led.startup()
-    ext_status_led.startup()
+    led.startup()
 
     # Uncomment to align sampling to the next minute
     # align_to_next_minute()
@@ -157,7 +145,7 @@ def main():
         # Read raw ADC values, calibrate them, then write in column order
         adc_raw = adc_manager.read_all()
         adc_calibrated = apply_calibration(adc_raw, calibration)
-        adc_values = [adc_calibrated.get(channel) for channel in adc_manager.get_channel_names()]
+        adc_values = [adc_calibrated.get(channel) for channel in adc_channels]
 
         # Write all sensor values to CSV
         writer.writerow([timestamp_utc] + pulse_values + adc_values)
@@ -165,8 +153,7 @@ def main():
         os.fsync(file_handle.fileno())
 
         # Blink LED to indicate successful sample
-        status_led.heartbeat()
-        ext_status_led.heartbeat()
+        led.heartbeat()
 
         # Send data to IoT Hub
         if iot:
@@ -174,13 +161,12 @@ def main():
                 payload = {
                     "timestamp": timestamp_utc,
                     "pulses": {name: val for (name, _), val in zip(counters, pulse_values)},
-                    "adc": {channel: val for channel, val in zip(adc_manager.get_channel_names(), adc_values)},
+                    "adc": {channel: val for channel, val in zip(adc_channels, adc_values)},
                 }
                 iot.send("data", payload)
             except Exception:
                 logger.warning("IoT data-bericht kon niet worden verstuurd")
-                status_led.error()
-                ext_status_led.error()
+                led.error()
 
             # Heartbeat
             if next_heartbeat and time.time() >= next_heartbeat:
@@ -197,22 +183,9 @@ def main():
         time.sleep(sleep_duration)
 
 if __name__ == "__main__":
-    adc_manager = None
     try:
-        adc_manager = None
         main()
     except KeyboardInterrupt:
         pass
     finally:
-        # Attempt to stop LEDs and ADC background sampler if present
-        try:
-            Legacy_led.stop()
-        except Exception:
-            pass
-        try:
-            # If an ADCManager was created in main it will be referenced in the module scope; stop it.
-            if 'adc_manager' in globals() and globals().get('adc_manager'):
-                globals().get('adc_manager').stop()
-        except Exception:
-            pass
-        #ext_status_led.stop()
+        led.stop()

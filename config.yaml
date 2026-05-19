@@ -1,27 +1,20 @@
 sampling_seconds: 60
 pulses_enabled: true
 upload_minutes: 60    # how often to attempt Azure upload (minutes)
-#gpio_backends: [pigpio, lgpio, rpi]
-gpio_backends: [lgpio]
+gpio_backends: [pigpio, lgpio, rpi]
 lgpio_chip_priority: [0, 4, 10, 11, 12, 13]
 device:
-  id: "pi-node-staldemo"
-  site: "WTS-Innovatron"
-  location: "MyDesk"    # NO SPECIAL CHARACTERS, used in Azure IoT Hub device twin tags
+  id: "pi-node-02"
+  site: "Farm-02"
+  location: "Barn-02"
 storage: { daily_rotate: true }
 iot:
   enabled: true          # zet op false om IoT Hub te pauzeren
   heartbeat_seconds: 15  # interval voor "I am alive"
   send_settings_on_start: true
-status_led:
-  enabled: true         # External GPIO LED (RP5 IO header)
-  gpio_pin: 22          # GPIO pin (BCM numbering)
-  backend: lgpio        # GPIO backend: "lgpio", "RPi.GPIO", "pigpio", or null for auto-detect
-led_ring:
-  enabled: true         # WS281x/NeoPixel ring - uses SPI MOSI (GPIO10, physical pin 19) on Pi 5
-  led_count: 3          # Number of LEDs in the ring
-  brightness: 0.375     # 0.0-1.0
-  pixel_order: GRB      # WS2812B 3-channel: GRB or RGB. SK6812 4-channel: GRBW or RGBW
+led:
+  enabled: true          # ACT LED knippert bij elke sample
+  name: "ACT"            # LED naam (ACT of PWR)
 pulses:
   - { name: "fan_rpm", gpio: 17, pull_up: true, edge: "falling", debounce_us: 5000 }
   - { name: "meter_pulses", gpio: 27, pull_up: true, edge: "falling", debounce_us: 2000 }
@@ -42,22 +35,6 @@ i2c_adcs:
       - { name: "volt_6", channel: 1, samples: 5 }
       - { name: "volt_7", channel: 2, samples: 5 }
       - { name: "volt_8", channel: 3, samples: 5 }
-  - address: 0x4a
-    name: "ads2"
-    gain: 1
-    channels:
-      - { name: "volt_9", channel: 0, samples: 5 }
-      - { name: "volt_10", channel: 1, samples: 5 }
-      - { name: "volt_11", channel: 2, samples: 5 }
-      - { name: "volt_12", channel: 3, samples: 5 }
-  - address: 0x4b
-    name: "ads3"
-    gain: 1
-    channels:
-      - { name: "volt_13", channel: 0, samples: 5 }
-      - { name: "volt_14", channel: 1, samples: 5 }
-      - { name: "volt_15", channel: 2, samples: 5 }
-      - { name: "volt_16", channel: 3, samples: 5 }
 calibration:
   volt_1: { scale: 1.000, offset: 0.000 }
   volt_2: { scale: 1.000, offset: 0.000 }
@@ -67,11 +44,3 @@ calibration:
   volt_6: { scale: 1.000, offset: 0.000 }
   volt_7: { scale: 1.000, offset: 0.000 }
   volt_8: { scale: 1.000, offset: 0.000 }
-  volt_9: { scale: 1.000, offset: 0.000 }
-  volt_10: { scale: 1.000, offset: 0.000 }
-  volt_11: { scale: 1.000, offset: 0.000 }
-  volt_12: { scale: 1.000, offset: 0.000 }
-  volt_13: { scale: 1.000, offset: 0.000 }
-  volt_14: { scale: 1.000, offset: 0.000 }
-  volt_15: { scale: 1.000, offset: 0.000 }
-  volt_16: { scale: 1.000, offset: 0.000 }

@@ -41,3 +41,5 @@ site/
 *.whl
 pip-wheel-metadata/
 data/
+
+pigpio/
