@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 # Project utility imports
 from utils import (
@@ -27,6 +28,37 @@ DEVICE_ID = os.environ.get("DEVICE_ID", "pi-node-01")
 
 # Set up logging (console and file)
 logger = setup_logger("collector", logfile="collector.log")
+
+def _device_id_from_conn_string(conn_str: str) -> Optional[str]:
+    """
+    Extract DeviceId from an IoT Hub connection string.
+    """
+    for part in conn_str.split(";"):
+        if part.startswith("DeviceId="):
+            value = part.split("=", 1)[1].strip()
+            return value or None
+    return None
+
+def resolve_device_id(cfg_device_id: Optional[str], iot_conn: str) -> str:
+    """
+    Resolve device id with this priority:
+    1) DEVICE_ID env var
+    2) DeviceId from IoT Hub connection string
+    3) config.yaml device.id
+    4) hardcoded default
+    """
+    env_device_id = os.environ.get("DEVICE_ID", "").strip()
+    if env_device_id:
+        return env_device_id
+
+    conn_device_id = _device_id_from_conn_string(iot_conn)
+    if conn_device_id:
+        return conn_device_id
+
+    if cfg_device_id and str(cfg_device_id).strip():
+        return str(cfg_device_id).strip()
+
+    return DEVICE_ID
 
 def align_to_next_minute() -> None:
     """
@@ -69,7 +101,9 @@ def main():
     cfg = load_config(CONFIG_PATH)
     sampling_seconds = int(cfg.get("sampling_seconds", 60))
     pulses_enabled = bool(cfg.get("pulses_enabled", True))
-    device_id = cfg.get("device", {}).get("id", DEVICE_ID)
+    iot_conn = os.environ.get("IOTHUB_DEVICE_CONNECTION_STRING", "")
+    cfg_device_id = cfg.get("device", {}).get("id")
+    device_id = resolve_device_id(cfg_device_id, iot_conn)
     calibration = cfg.get("calibration", {})
     iot_cfg = cfg.get("iot", {}) if isinstance(cfg, dict) else {}
 
@@ -81,7 +115,6 @@ def main():
     iot_enabled = bool(iot_cfg.get("enabled", True))
     heartbeat_seconds = int(iot_cfg.get("heartbeat_seconds", 60))
     send_settings_on_start = bool(iot_cfg.get("send_settings_on_start", True))
-    iot_conn = os.environ.get("IOTHUB_DEVICE_CONNECTION_STRING", "")
 
     # Ensure USB mount directory exists
     ensure_dir(USB_MOUNT)
