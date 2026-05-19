@@ -158,6 +158,7 @@ def main():
 
     # Open CSV file for writing
     file_handle, writer, csv_path = csv_writer(USB_MOUNT, device_id, header)
+    current_date = datetime.now(timezone.utc).date()
     logger.info("Writing CSV to %s", csv_path)
 
     # Signal successful startup
@@ -172,6 +173,16 @@ def main():
     while True:
         loop_started = time.time()
         timestamp_utc = datetime.now(timezone.utc).isoformat()
+        
+        # Check if date has changed (midnight) and rotate CSV file if needed
+        new_date = datetime.now(timezone.utc).date()
+        if new_date != current_date:
+            logger.info("Date changed from %s to %s; rotating CSV file", current_date, new_date)
+            file_handle.close()
+            file_handle, writer, csv_path = csv_writer(USB_MOUNT, device_id, header)
+            current_date = new_date
+            logger.info("Now writing CSV to %s", csv_path)
+        
         # Get pulse counts (or empty list if disabled)
         pulse_values = [counter.snapshot_and_reset() for _, counter in counters] if pulses_enabled else []
 

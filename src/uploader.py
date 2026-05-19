@@ -82,13 +82,24 @@ def list_candidates():
 
 def target_blob_path(local):
     """
-    Build Azure blob path as year/device/month/day.csv using UTC date parts.
+    Build Azure blob path as year/device/month/day.csv.
+    Extracts date from filename (YYYY-MM-DD_*.csv format), not current time.
     """
-    now_utc = datetime.now(timezone.utc)
-    year = now_utc.strftime("%Y")
-    month = now_utc.strftime("%m")
-    day_csv = now_utc.strftime("%d.csv")
-    return f"{year}/{ACTIVE_DEVICE_ID}/{month}/{day_csv}"
+    try:
+        # Extract date from filename: "2026-02-12_pi-node-02.csv" -> "2026-02-12"
+        date_str = local.stem.split("_")[0]  # "2026-02-12"
+        parts = date_str.split("-")
+        year, month, day = parts[0], parts[1], parts[2]
+        day_csv = f"{day}.csv"
+        return f"{year}/{ACTIVE_DEVICE_ID}/{month}/{day_csv}"
+    except (IndexError, ValueError):
+        # Fallback to current UTC time if filename doesn't match expected format
+        logger.warning(f"Could not parse date from filename {local.name}, using current UTC time")
+        now_utc = datetime.now(timezone.utc)
+        year = now_utc.strftime("%Y")
+        month = now_utc.strftime("%m")
+        day_csv = now_utc.strftime("%d.csv")
+        return f"{year}/{ACTIVE_DEVICE_ID}/{month}/{day_csv}"
 
 def upload_once():
     """
